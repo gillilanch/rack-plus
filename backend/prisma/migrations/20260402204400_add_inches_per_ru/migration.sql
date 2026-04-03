@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "rack" ADD COLUMN     "inches_per_ru" DOUBLE PRECISION NOT NULL DEFAULT 1.75;

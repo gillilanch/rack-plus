@@ -1,0 +1,12 @@
+@import './tailwind.css';
+@import './theme.css';
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  .rack-planner-print-area {
+    max-width: 100% !important;
+  }
+}
+
