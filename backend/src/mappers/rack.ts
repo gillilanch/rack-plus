@@ -33,6 +33,7 @@ export function toRackConfiguration(rack: RackWithDevices) {
     name: rack.name,
     totalHeight: rack.totalHeightU,
     inchesPerRU: rack.inchesPerRU,
+    rackWidthInches: rack.rackWidthInches,
     slackAllowance: rack.slackAllowance,
     connections,
     devices: devicesSorted.map((d) => ({

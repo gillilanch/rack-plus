@@ -46,6 +46,7 @@ export async function saveRack(config: RackConfiguration): Promise<RackConfigura
       name: config.name,
       totalHeight: config.totalHeight,
       inchesPerRU: config.inchesPerRU,
+      rackWidthInches: config.rackWidthInches,
       slackAllowance: config.slackAllowance,
       devices: config.devices,
       connections: config.connections,

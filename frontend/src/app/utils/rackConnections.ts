@@ -64,7 +64,7 @@ function createConnectionsBetweenDevices(
   const connections: RackConnection[] = [];
   
   // Try to find matching ports
-  const matchingPorts = findMatchingPorts(deviceA, deviceB);
+  const matchingPorts = findMatchingPortPairs(deviceA, deviceB);
   
   matchingPorts.forEach(({ fromPort, toPort, fromDeviceId, toDeviceId }) => {
     const fromDevice = fromDeviceId === deviceA.id ? deviceA : deviceB;
@@ -100,7 +100,7 @@ function createConnectionsBetweenDevices(
   return connections;
 }
 
-function findMatchingPorts(
+export function findMatchingPortPairs(
   deviceA: RackDevice,
   deviceB: RackDevice
 ): Array<{ fromPort: Port; toPort: Port; fromDeviceId: string; toDeviceId: string }> {
@@ -110,6 +110,7 @@ function findMatchingPorts(
   deviceA.ports.forEach(portA => {
     if (portA.direction === 'output' || portA.direction === 'both') {
       deviceB.ports.forEach(portB => {
+        if (portA === portB) return;
         if (portB.direction === 'input' || portB.direction === 'both') {
           // Direct match
           if (portA.type === portB.type) {
@@ -129,6 +130,7 @@ function findMatchingPorts(
   deviceB.ports.forEach(portB => {
     if (portB.direction === 'output' || portB.direction === 'both') {
       deviceA.ports.forEach(portA => {
+        if (portB === portA) return;
         if (portA.direction === 'input' || portA.direction === 'both') {
           if (portB.type === portA.type) {
             matches.push({ 

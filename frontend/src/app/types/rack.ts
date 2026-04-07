@@ -6,6 +6,9 @@ export interface RackDevice extends Device {
   physicalHeightInches?: number; // Original height in inches
 }
 
+/** Which side of the device row the cable meets in the rack diagram. */
+export type RackCableVisualEdge = 'left' | 'right';
+
 export interface RackConnection {
   id: string;
   fromDeviceId: string;
@@ -15,6 +18,16 @@ export interface RackConnection {
   cableType: string;
   estimatedLength: number; // in feet
   adapters?: string[];
+  /** Minimum cable run in inches (rack geometry + slack); label shows >&nbsp;n */
+  minCableLengthInches?: number;
+  extraSlackInches?: number;
+  cableStyle?: 'suggested' | 'manual';
+  /** SVG anchor side (default: right at from, left at to — crosses rack). */
+  routeFromEdge?: RackCableVisualEdge;
+  routeToEdge?: RackCableVisualEdge;
+  /** 0 = top of device row, 1 = bottom (default 0.5 = center). */
+  routeFromYRatio?: number;
+  routeToYRatio?: number;
 }
 
 export interface RackConfiguration {
@@ -23,6 +36,8 @@ export interface RackConfiguration {
   totalHeight: number; // Total rack units
   /** Inches per 1U (RU); default 1.75" for standard racks. */
   inchesPerRU?: number;
+  /** Front-panel / rail width in inches (typical 19"). */
+  rackWidthInches?: number;
   slackAllowance: number; // Additional cable length in feet
   devices: RackDevice[];
   connections: RackConnection[];

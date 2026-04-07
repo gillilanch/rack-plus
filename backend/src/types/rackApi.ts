@@ -18,6 +18,13 @@ export const rackConnectionSchema = z.object({
   cableType: z.string(),
   estimatedLength: z.number(),
   adapters: z.array(z.string()).optional(),
+  minCableLengthInches: z.number().optional(),
+  extraSlackInches: z.number().optional(),
+  cableStyle: z.enum(['suggested', 'manual']).optional(),
+  routeFromEdge: z.enum(['left', 'right']).optional(),
+  routeToEdge: z.enum(['left', 'right']).optional(),
+  routeFromYRatio: z.number().min(0).max(1).optional(),
+  routeToYRatio: z.number().min(0).max(1).optional(),
 });
 
 export const rackDeviceSchema = z.object({
@@ -37,6 +44,7 @@ export const createRackBodySchema = z.object({
   name: z.string().min(1),
   totalHeight: z.number().int().positive(),
   inchesPerRU: inchesPerRUSchema.optional().default(1.75),
+  rackWidthInches: z.number().positive().max(120).optional().default(19),
   slackAllowance: z.number(),
   devices: z.array(rackDeviceSchema),
   connections: z.array(rackConnectionSchema),
@@ -47,6 +55,7 @@ export const updateRackBodySchema = z.object({
   name: z.string().min(1),
   totalHeight: z.number().int().positive(),
   inchesPerRU: inchesPerRUSchema.optional().default(1.75),
+  rackWidthInches: z.number().positive().max(120).optional().default(19),
   slackAllowance: z.number(),
   devices: z.array(rackDeviceSchema),
   connections: z.array(rackConnectionSchema),

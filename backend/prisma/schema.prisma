@@ -13,6 +13,8 @@ model Rack {
   totalHeightU   Int          @map("total_height_u")
   /// Inches per 1U (RU), e.g. 1.75 for standard racks.
   inchesPerRU    Float        @default(1.75) @map("inches_per_ru")
+  /// Front-panel width (e.g. 19" EIA equipment width).
+  rackWidthInches Float       @default(19) @map("rack_width_inches")
   slackAllowance Float        @map("slack_allowance")
   connections    Json         @default("[]")
   createdAt      DateTime     @default(now()) @map("created_at")

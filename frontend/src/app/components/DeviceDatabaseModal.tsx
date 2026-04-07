@@ -11,6 +11,7 @@ import {
 } from '../utils/customDevices';
 import { AddDeviceModal } from './AddDeviceModal';
 
+
 interface DeviceDatabaseModalProps {
   isOpen: boolean;
   onClose: () => void;

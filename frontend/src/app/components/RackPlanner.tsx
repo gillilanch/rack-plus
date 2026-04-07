@@ -4,20 +4,28 @@ import { DndProvider } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
 import type { Device } from '../data/equipment';
 import { createRack, getRack, saveRack } from '../api/racks';
-import { RackConfiguration, RackDevice } from '../types/rack';
+import type { RackConnection, RackConfiguration, RackDevice } from '../types/rack';
+import {
+  connectionFromManualPorts,
+  findFirstUnusedMatchingPortPair,
+  hasDirectedPortConnection,
+} from '../utils/rackConnectionHelpers';
 import { saveCustomDevice } from '../utils/customDevices';
 import { deviceCategoryToManualLabel, mergeBuiltInAndCustomDevices } from '../utils/deviceCatalogSearch';
-import { DEFAULT_INCHES_PER_RU } from '../utils/rackUnits';
+import { DEFAULT_INCHES_PER_RU, DEFAULT_RACK_WIDTH_INCHES } from '../utils/rackUnits';
 import { filterPlaceholderRackDevices } from '../utils/rackPlaceholders';
 import { AddDeviceModal } from './AddDeviceModal';
 import { CSVImport, type CsvImportCompletePayload } from './CSVImport';
 import { CsvUnmatchedReviewModal, type CsvUnmatchedQueueItem } from './CsvUnmatchedReviewModal';
 import { RackPlannerWorkArea } from './RackPlannerWorkArea';
 import { RackDeviceEditor } from './RackDeviceEditor';
+import { RackDualDeviceEditor } from './RackDualDeviceEditor';
 import { ManualDeviceAdd } from './ManualDeviceAdd';
 import { CurrentRacksModal } from './CurrentRacksModal';
 import { SaveRackModal } from './SaveRackModal';
 import { CloudOff, ImageDown, Loader2, Printer, Save, Settings } from 'lucide-react';
+
+
 
 /** Session-only: each browser tab/session starts fresh; explicit save still persists to the server. */
 const RACK_SESSION_KEY = 'rackPlanner.rackId';
@@ -26,6 +34,7 @@ function hydrateFromConfig(config: RackConfiguration, setters: {
   setRackName: (v: string) => void;
   setTotalHeight: (v: number) => void;
   setInchesPerRU: (v: number) => void;
+  setRackWidthInches: (v: number) => void;
   setSlackAllowance: (v: number) => void;
   setConnections: (v: RackConfiguration['connections']) => void;
   setDevices: (v: RackDevice[]) => void;
@@ -35,6 +44,7 @@ function hydrateFromConfig(config: RackConfiguration, setters: {
   setters.setRackName(config.name);
   setters.setTotalHeight(config.totalHeight);
   setters.setInchesPerRU(config.inchesPerRU ?? DEFAULT_INCHES_PER_RU);
+  setters.setRackWidthInches(config.rackWidthInches ?? DEFAULT_RACK_WIDTH_INCHES);
   setters.setSlackAllowance(config.slackAllowance);
   setters.setConnections(config.connections);
   setters.setDevices(filterPlaceholderRackDevices(config.devices as RackDevice[]));
@@ -50,6 +60,7 @@ export function RackPlanner() {
   const [totalHeight, setTotalHeight] = useState(42);
   const [slackAllowance, setSlackAllowance] = useState(0);
   const [inchesPerRU, setInchesPerRU] = useState(DEFAULT_INCHES_PER_RU);
+  const [rackWidthInches, setRackWidthInches] = useState(DEFAULT_RACK_WIDTH_INCHES);
   const [connections, setConnections] = useState<RackConfiguration['connections']>([]);
   const [devices, setDevices] = useState<RackDevice[]>([]);
   const [editingDevice, setEditingDevice] = useState<RackDevice | null>(null);
@@ -64,13 +75,109 @@ export function RackPlanner() {
   const [csvAddPrefillName, setCsvAddPrefillName] = useState('');
   const [currentRacksOpen, setCurrentRacksOpen] = useState(false);
   const [saveRackModalOpen, setSaveRackModalOpen] = useState(false);
+  const [portMismatch, setPortMismatch] = useState<{
+    from: RackDevice;
+    to: RackDevice;
+    extra: number;
+  } | null>(null);
+  const [dualDevices, setDualDevices] = useState<{ a: RackDevice; b: RackDevice } | null>(null);
+  const pendingCableRef = useRef<{ fromId: string; toId: string; extra: number } | null>(null);
   const rackCaptureRef = useRef<HTMLDivElement | null>(null);
+
+  const rackExportContext = useMemo(
+    () => ({
+      placedDevices: devices.filter((d) => d.rackPosition !== undefined),
+      connections,
+    }),
+    [devices, connections],
+  );
+
+  const handleAddConnection = useCallback((c: RackConnection) => {
+    setConnections((prev) => {
+      if (
+        hasDirectedPortConnection(
+          prev,
+          c.fromDeviceId,
+          c.toDeviceId,
+          c.fromPort,
+          c.toPort,
+        )
+      ) {
+        return prev;
+      }
+      return [...prev, c];
+    });
+  }, []);
+
+  const handleRemoveConnection = useCallback((connectionId: string) => {
+    setConnections((prev) => prev.filter((x) => x.id !== connectionId));
+  }, []);
+
+  const handlePortMismatch = useCallback(
+    (p: { from: RackDevice; to: RackDevice; extraSlackInches: number }) => {
+      setPortMismatch({ from: p.from, to: p.to, extra: p.extraSlackInches });
+    },
+    [],
+  );
+
+  const handlePortMismatchYes = useCallback(() => {
+    if (!portMismatch) return;
+    pendingCableRef.current = {
+      fromId: portMismatch.from.id,
+      toId: portMismatch.to.id,
+      extra: portMismatch.extra,
+    };
+    setDualDevices({ a: portMismatch.from, b: portMismatch.to });
+    setPortMismatch(null);
+  }, [portMismatch]);
+
+  const handlePortMismatchNo = useCallback(() => {
+    setPortMismatch(null);
+  }, []);
+
+  const handleDualSave = useCallback(
+    (a: RackDevice, b: RackDevice) => {
+      const pend = pendingCableRef.current;
+      pendingCableRef.current = null;
+      setDualDevices(null);
+      setDevices((prev) => prev.map((d) => (d.id === a.id ? a : d.id === b.id ? b : d)));
+      if (pend) {
+        const from = pend.fromId === a.id ? a : b;
+        const to = pend.toId === a.id ? a : b;
+        setConnections((cprev) => {
+          const m = findFirstUnusedMatchingPortPair(from, to, cprev);
+          if (!m) return cprev;
+          const devFrom = m.fromDeviceId === a.id ? a : b;
+          const devTo = m.toDeviceId === a.id ? a : b;
+          return [
+            ...cprev,
+            connectionFromManualPorts(
+              devFrom,
+              devTo,
+              m.fromPort,
+              m.toPort,
+              inchesPerRU,
+              slackAllowance,
+              pend.extra,
+            ),
+          ];
+        });
+      }
+    },
+    [inchesPerRU, slackAllowance],
+  );
+
+  const handleDualClose = useCallback(() => {
+    pendingCableRef.current = null;
+    setDualDevices(null);
+  }, []);
 
   const hydrateSetters = useMemo(
     () => ({
       setRackName,
       setTotalHeight,
       setInchesPerRU,
+      setRackWidthInches,
       setSlackAllowance,
       setConnections,
       setDevices,
@@ -105,6 +212,7 @@ export function RackPlanner() {
             name: 'New rack',
             totalHeight: 42,
             inchesPerRU: DEFAULT_INCHES_PER_RU,
+            rackWidthInches: DEFAULT_RACK_WIDTH_INCHES,
             slackAllowance: 0,
             devices: [],
             connections: [],
@@ -144,6 +252,7 @@ export function RackPlanner() {
         name,
         totalHeight,
         inchesPerRU,
+        rackWidthInches,
         slackAllowance,
         devices,
         connections,
@@ -152,7 +261,7 @@ export function RackPlanner() {
       sessionStorage.setItem(RACK_SESSION_KEY, updated.id);
       hydrateFromConfig(updated, hydrateSetters);
     },
-    [rackId, totalHeight, inchesPerRU, slackAllowance, devices, connections, hydrateSetters],
+    [rackId, totalHeight, inchesPerRU, rackWidthInches, slackAllowance, devices, connections, hydrateSetters],
   );
 
   const handleSaveRackAsNew = useCallback(
@@ -161,6 +270,7 @@ export function RackPlanner() {
         name,
         totalHeight,
         inchesPerRU,
+        rackWidthInches,
         slackAllowance,
         devices,
         connections,
@@ -168,7 +278,7 @@ export function RackPlanner() {
       sessionStorage.setItem(RACK_SESSION_KEY, created.id);
       hydrateFromConfig(created, hydrateSetters);
     },
-    [totalHeight, inchesPerRU, slackAllowance, devices, connections, hydrateSetters],
+    [totalHeight, inchesPerRU, rackWidthInches, slackAllowance, devices, connections, hydrateSetters],
   );
 
   const handlePrint = useCallback(() => {
@@ -204,6 +314,7 @@ export function RackPlanner() {
     setDevices((prev) =>
       prev.map((d) => (d.id === deviceId ? { ...d, rackPosition: undefined } : d)),
     );
+    setConnections((c) => c.filter((x) => x.fromDeviceId !== deviceId && x.toDeviceId !== deviceId));
   }, []);
 
   const handleCsvImportComplete = useCallback((payload: CsvImportCompletePayload) => {
@@ -325,6 +436,7 @@ export function RackPlanner() {
 
   const handleRemoveDevice = (deviceId: string) => {
     setDevices((prev) => prev.filter((d) => d.id !== deviceId));
+    setConnections((c) => c.filter((x) => x.fromDeviceId !== deviceId && x.toDeviceId !== deviceId));
   };
 
   const handleSaveDevice = (updatedDevice: RackDevice) => {
@@ -435,7 +547,7 @@ export function RackPlanner() {
         {showSettings && (
           <div className="no-print rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
             <h3 className="mb-4 font-semibold text-gray-900">Rack size</h3>
-            <div className="grid max-w-md gap-6 sm:grid-cols-2">
+            <div className="grid max-w-2xl gap-6 sm:grid-cols-3">
               <div>
                 <label className="mb-2 block text-sm font-medium text-gray-700">Total rack height (U)</label>
                 <input
@@ -448,6 +560,24 @@ export function RackPlanner() {
                 />
                 <p className="mt-1 text-xs text-gray-500">
                   {(totalHeight * inchesPerRU).toFixed(2)}&quot; tall (using inches/RU below)
+                </p>
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-medium text-gray-700">Rack width (inches)</label>
+                <input
+                  type="number"
+                  value={rackWidthInches}
+                  onChange={(e) => {
+                    const n = parseFloat(e.target.value);
+                    if (!Number.isNaN(n) && n > 0 && n <= 120) setRackWidthInches(n);
+                  }}
+                  min={0.01}
+                  max={120}
+                  step={0.25}
+                  className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <p className="mt-1 text-xs text-gray-500">
+                  Typical 19&quot; equipment width (EIA). Diagram scales with height.
                 </p>
               </div>
               <div>
@@ -477,6 +607,7 @@ export function RackPlanner() {
                 onCsvImportComplete={handleCsvImportComplete}
                 pendingUnmatchedCount={csvUnmatchedQueue.length}
                 onReopenCsvReview={() => setCsvReviewOpen(true)}
+                rackExportContext={rackExportContext}
               />
             </div>
             <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
@@ -491,6 +622,7 @@ export function RackPlanner() {
             devices={devices}
             totalHeight={totalHeight}
             inchesPerRU={inchesPerRU}
+            rackWidthInches={rackWidthInches}
             rackCaptureRef={rackCaptureRef}
             onEditDevice={setEditingDevice}
             onRemoveDevice={handleRemoveDevice}
@@ -498,8 +630,14 @@ export function RackPlanner() {
             onCsvImportComplete={handleCsvImportComplete}
             pendingCsvUnmatchedCount={csvUnmatchedQueue.length}
             onReopenCsvReview={() => setCsvReviewOpen(true)}
+            rackExportContext={rackExportContext}
             onAddManualDevice={handleAddManualDevice}
             onUpdateDevicePosition={handleUpdateDevicePosition}
+            connections={connections}
+            slackAllowanceFeet={slackAllowance}
+            onAddConnection={handleAddConnection}
+            onPortMismatch={handlePortMismatch}
+            onRemoveConnection={handleRemoveConnection}
           />
         )}
       </div>
@@ -543,6 +681,52 @@ export function RackPlanner() {
         existingDeviceNames={existingNamesForCsvAdd}
         prefillName={csvAddPrefillName}
       />
+
+      {portMismatch && (
+        <div
+          className="no-print fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="port-mismatch-title"
+        >
+          <div className="max-w-md rounded-xl bg-white p-6 shadow-xl">
+            <h2 id="port-mismatch-title" className="text-lg font-bold text-gray-900">
+              No matching ports
+            </h2>
+            <p className="mt-2 text-sm text-gray-600">
+              There is no compatible port pair between <strong>{portMismatch.from.name}</strong> and{' '}
+              <strong>{portMismatch.to.name}</strong> for a direct cable. Would you like to reconfigure both devices?
+            </p>
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={handlePortMismatchNo}
+                className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                No — discard cable
+              </button>
+              <button
+                type="button"
+                onClick={handlePortMismatchYes}
+                className="rounded-lg bg-[#003366] px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+              >
+                Yes — edit ports
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {dualDevices && (
+        <RackDualDeviceEditor
+          deviceA={dualDevices.a}
+          deviceB={dualDevices.b}
+          isOpen
+          onClose={handleDualClose}
+          onSave={handleDualSave}
+          inchesPerRU={inchesPerRU}
+        />
+      )}
     </DndProvider>
   );
 }

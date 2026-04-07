@@ -37,6 +37,7 @@ export async function createRack(body: CreateRackBody) {
       name: body.name,
       totalHeightU: body.totalHeight,
       inchesPerRU: body.inchesPerRU,
+      rackWidthInches: body.rackWidthInches,
       slackAllowance: body.slackAllowance,
       connections: body.connections as unknown as Prisma.InputJsonValue,
       devices: {
@@ -56,6 +57,7 @@ export async function upsertRackFull(id: string, body: UpdateRackBody) {
         name: body.name,
         totalHeightU: body.totalHeight,
         inchesPerRU: body.inchesPerRU,
+        rackWidthInches: body.rackWidthInches,
         slackAllowance: body.slackAllowance,
         connections: body.connections as unknown as Prisma.InputJsonValue,
       },

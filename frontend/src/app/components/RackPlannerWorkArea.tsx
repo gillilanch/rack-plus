@@ -1,7 +1,7 @@
 import type { Ref } from 'react';
 import type { Port } from '../data/equipment';
-import type { RackDevice } from '../types/rack';
-import { CSVImport, type CsvImportCompletePayload } from './CSVImport';
+import type { RackConnection, RackDevice } from '../types/rack';
+import { CSVImport, type CsvImportCompletePayload, type CsvRackExportContext } from './CSVImport';
 import { ManualDeviceAdd } from './ManualDeviceAdd';
 import { RackCableConnectionsPanel } from './RackCableConnectionsPanel';
 import { RackVisualizer } from './RackVisualizer';
@@ -19,6 +19,7 @@ export function RackDevicesColumn(props: {
   onCsvImportComplete: (payload: CsvImportCompletePayload) => void;
   pendingCsvUnmatchedCount?: number;
   onReopenCsvReview?: () => void;
+  rackExportContext?: CsvRackExportContext;
   onAddManualDevice: (data: {
     name: string;
     category: string;
@@ -35,6 +36,7 @@ export function RackDevicesColumn(props: {
     onCsvImportComplete,
     pendingCsvUnmatchedCount,
     onReopenCsvReview,
+    rackExportContext,
     onAddManualDevice,
   } = props;
   return (
@@ -53,6 +55,7 @@ export function RackDevicesColumn(props: {
           onCsvImportComplete={onCsvImportComplete}
           pendingUnmatchedCount={pendingCsvUnmatchedCount}
           onReopenCsvReview={onReopenCsvReview}
+          rackExportContext={rackExportContext}
         />
       </div>
       <div className="shrink-0 border-t border-gray-100 pt-6">
@@ -68,11 +71,17 @@ export function RackDevicesColumn(props: {
 export function RackPreviewColumn(props: {
   totalHeight: number;
   inchesPerRU: number;
+  rackWidthInches?: number;
   devices: RackDevice[];
   rackCaptureRef?: Ref<HTMLDivElement | null>;
   onUpdateDevicePosition: (deviceId: string, position: number) => void;
   onRemoveDevice: (deviceId: string) => void;
   onEditDevice: (device: RackDevice) => void;
+  connections?: RackConnection[];
+  slackAllowanceFeet?: number;
+  onAddConnection?: (c: RackConnection) => void;
+  onPortMismatch?: (p: { from: RackDevice; to: RackDevice; extraSlackInches: number }) => void;
+  onRemoveConnection?: (connectionId: string) => void;
 }) {
   return (
     <section className="rack-preview-column flex min-h-[min(60vh,22rem)] flex-col rounded-xl border border-gray-200 bg-white p-6 shadow-sm lg:h-full lg:min-h-0 [contain:layout]">
@@ -81,11 +90,17 @@ export function RackPreviewColumn(props: {
           fillParent
           totalHeight={props.totalHeight}
           inchesPerRU={props.inchesPerRU}
+          rackWidthInches={props.rackWidthInches}
           devices={props.devices}
           rackCaptureRef={props.rackCaptureRef}
           onUpdateDevicePosition={props.onUpdateDevicePosition}
           onRemoveDevice={props.onRemoveDevice}
           onEditDevice={props.onEditDevice}
+          connections={props.connections}
+          slackAllowanceFeet={props.slackAllowanceFeet}
+          onAddConnection={props.onAddConnection}
+          onPortMismatch={props.onPortMismatch}
+          onRemoveConnection={props.onRemoveConnection}
         />
       </div>
     </section>
@@ -96,6 +111,7 @@ export function RackPlannerWorkArea(props: {
   devices: RackDevice[];
   totalHeight: number;
   inchesPerRU: number;
+  rackWidthInches?: number;
   rackCaptureRef?: Ref<HTMLDivElement | null>;
   onEditDevice: (d: RackDevice) => void;
   onRemoveDevice: (id: string) => void;
@@ -103,6 +119,7 @@ export function RackPlannerWorkArea(props: {
   onCsvImportComplete: (payload: CsvImportCompletePayload) => void;
   pendingCsvUnmatchedCount?: number;
   onReopenCsvReview?: () => void;
+  rackExportContext?: CsvRackExportContext;
   onAddManualDevice: (data: {
     name: string;
     category: string;
@@ -111,6 +128,11 @@ export function RackPlannerWorkArea(props: {
     ports?: Port[];
   }) => void;
   onUpdateDevicePosition: (deviceId: string, position: number) => void;
+  connections?: RackConnection[];
+  slackAllowanceFeet?: number;
+  onAddConnection?: (c: RackConnection) => void;
+  onPortMismatch?: (p: { from: RackDevice; to: RackDevice; extraSlackInches: number }) => void;
+  onRemoveConnection?: (connectionId: string) => void;
 }) {
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 lg:items-stretch">
@@ -122,16 +144,23 @@ export function RackPlannerWorkArea(props: {
         onCsvImportComplete={props.onCsvImportComplete}
         pendingCsvUnmatchedCount={props.pendingCsvUnmatchedCount}
         onReopenCsvReview={props.onReopenCsvReview}
+        rackExportContext={props.rackExportContext}
         onAddManualDevice={props.onAddManualDevice}
       />
       <RackPreviewColumn
         totalHeight={props.totalHeight}
         inchesPerRU={props.inchesPerRU}
+        rackWidthInches={props.rackWidthInches}
         devices={props.devices}
         rackCaptureRef={props.rackCaptureRef}
         onUpdateDevicePosition={props.onUpdateDevicePosition}
         onRemoveDevice={props.onRemoveDevice}
         onEditDevice={props.onEditDevice}
+        connections={props.connections}
+        slackAllowanceFeet={props.slackAllowanceFeet}
+        onAddConnection={props.onAddConnection}
+        onPortMismatch={props.onPortMismatch}
+        onRemoveConnection={props.onRemoveConnection}
       />
     </div>
   );

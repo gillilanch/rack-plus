@@ -1,7 +1,6 @@
 import { useRef, useState } from 'react';
 import { Upload, FileSpreadsheet, AlertCircle, Download, Link2, ListChecks } from 'lucide-react';
 import Papa from 'papaparse';
-import { RackDevice } from '../types/rack';
 import {
   deviceCategoryToManualLabel,
   mergeBuiltInAndCustomDevices,
@@ -14,6 +13,8 @@ import {
   extractCandidatesFromObjectRows,
 } from '../utils/csvGridExtract';
 import type { CsvUnmatchedQueueItem } from './CsvUnmatchedReviewModal';
+import type { RackConnection, RackDevice } from '../types/rack';
+import { buildRackPartsExportCsv } from '../utils/rackExportCsv';
 
 export type CsvImportCompletePayload = {
   matchedDevices: RackDevice[];
@@ -28,10 +29,17 @@ type ImportMatchSummary = {
   unmatchedNames: string[];
 };
 
+export type CsvRackExportContext = {
+  placedDevices: RackDevice[];
+  connections: RackConnection[];
+};
+
 interface CSVImportProps {
   onCsvImportComplete: (payload: CsvImportCompletePayload) => void;
   pendingUnmatchedCount?: number;
   onReopenCsvReview?: () => void;
+  /** When set, download exports current rack parts + connections instead of a blank template. */
+  rackExportContext?: CsvRackExportContext;
 }
 
 function partitionCandidates(
@@ -100,29 +108,36 @@ export function CSVImport({
   onCsvImportComplete,
   pendingUnmatchedCount = 0,
   onReopenCsvReview,
+  rackExportContext,
 }: CSVImportProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [matchSummary, setMatchSummary] = useState<ImportMatchSummary | null>(null);
+  const [emptyRackExportConfirmOpen, setEmptyRackExportConfirmOpen] = useState(false);
 
-  const handleDownloadTemplate = () => {
-    const template = `name,category,heightInches
-Sony FX6,Camera,7.5
-MacBook Pro (M3),Laptop,1.75
-Focusrite Scarlett 2i2,Audio,1.75
-Dell UltraSharp U2720Q,Monitor,14.5
-Unlisted part number XYZ,Interface,2`;
-
-    const blob = new Blob([template], { type: 'text/csv' });
+  const runRackExportDownload = () => {
+    const placed = rackExportContext?.placedDevices ?? [];
+    const conns = rackExportContext?.connections ?? [];
+    const csv = buildRackPartsExportCsv(placed, conns);
+    const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = 'rack_parts_template.csv';
+    link.download = 'rack_parts_and_connections.csv';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
+  };
+
+  const handleDownloadTemplate = () => {
+    const placed = rackExportContext?.placedDevices ?? [];
+    if (placed.length === 0) {
+      setEmptyRackExportConfirmOpen(true);
+      return;
+    }
+    runRackExportDownload();
   };
 
   const emitImport = (
@@ -233,6 +248,44 @@ Unlisted part number XYZ,Interface,2`;
 
   return (
     <div className="space-y-4">
+      {emptyRackExportConfirmOpen && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="empty-rack-export-title"
+        >
+          <div className="max-w-md rounded-xl bg-white p-6 shadow-xl">
+            <h2 id="empty-rack-export-title" className="text-lg font-bold text-gray-900">
+              No parts on rack
+            </h2>
+            <p className="mt-2 text-sm text-gray-600">
+              There are no devices placed on the rack to export. Would you still like to continue? You will get a CSV
+              with headers only.
+            </p>
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setEmptyRackExportConfirmOpen(false)}
+                className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                No
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setEmptyRackExportConfirmOpen(false);
+                  runRackExportDownload();
+                }}
+                className="rounded-lg bg-[#003366] px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+              >
+                Yes, continue
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
@@ -336,8 +389,14 @@ Unlisted part number XYZ,Interface,2`;
         className="flex items-center gap-2 rounded-lg bg-[#003366] px-6 py-2 font-medium text-white transition-colors hover:bg-blue-700"
       >
         <Download className="size-5" />
-        Download template
+        {rackExportContext ? 'Download rack export (CSV)' : 'Download template'}
       </button>
+      {rackExportContext && (
+        <p className="text-xs text-gray-600">
+          Exports every part currently on the rack and how each is connected (other device and port path). Use when the
+          rack is empty to get headers only — you will be asked to confirm.
+        </p>
+      )}
     </div>
   );
 }

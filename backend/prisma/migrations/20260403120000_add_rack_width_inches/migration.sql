@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "rack" ADD COLUMN "rack_width_inches" DOUBLE PRECISION NOT NULL DEFAULT 19;

@@ -1,4 +1,4 @@
-import { Device, Cable, Adapter, ConnectorType, cables, adapters } from '../data/equipment';
+import { Device, Cable, Adapter, ConnectorType, cables, adapters, type Port } from '../data/equipment';
 
 export interface ConnectionSolution {
   type: 'direct' | 'adapter' | 'converter' | 'impossible';
@@ -147,4 +147,56 @@ export function findConnection(fromDevice: Device, toDevice: Device): Connection
     const typeOrder = { direct: 0, adapter: 1, converter: 2, impossible: 3 };
     return typeOrder[a.type] - typeOrder[b.type];
   });
+}
+
+export type ConnectablePair = {
+  fromPort: Port;
+  toPort: Port;
+  solution: ConnectionSolution;
+};
+
+/** Enumerate distinct output→input port pairs that have a direct or single-adapter cable path. */
+export function findAllConnectablePairs(fromDevice: Device, toDevice: Device, max = 16): ConnectablePair[] {
+  const out: ConnectablePair[] = [];
+  const seen = new Set<string>();
+  const outputPorts = fromDevice.ports.filter(
+    (p) => p.direction === 'output' || p.direction === 'both',
+  );
+  const inputPorts = toDevice.ports.filter((p) => p.direction === 'input' || p.direction === 'both');
+
+  for (const outputPort of outputPorts) {
+    for (const inputPort of inputPorts) {
+      const directCable = findDirectCable(outputPort.type, inputPort.type);
+      if (directCable) {
+        const key = `d-${outputPort.type}-${inputPort.type}-${outputPort.label ?? ''}-${inputPort.label ?? ''}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({
+          fromPort: outputPort,
+          toPort: inputPort,
+          solution: {
+            type: 'direct',
+            cable: directCable,
+            confidence: 'high',
+            notes: `Connect ${outputPort.label || outputPort.type} to ${inputPort.label || inputPort.type}`,
+          },
+        });
+        if (out.length >= max) return out;
+        continue;
+      }
+      const adapterSolution = findAdapterSolution(outputPort.type, inputPort.type);
+      if (adapterSolution) {
+        const key = `a-${outputPort.type}-${inputPort.type}-${outputPort.label ?? ''}-${inputPort.label ?? ''}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({
+          fromPort: outputPort,
+          toPort: inputPort,
+          solution: adapterSolution,
+        });
+        if (out.length >= max) return out;
+      }
+    }
+  }
+  return out;
 }
