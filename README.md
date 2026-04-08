@@ -1,7 +1,6 @@
 
-  # Cable Identification System
-
-  This is a code bundle for Cable Identification System. The original project is available at https://www.figma.com/design/dvgogdMgYD5MaeYMCtWtnm/Cable-Identification-System.
+  # Rack + 
+  Rack Configure. Connect. 
 
   ## Running the code
 
