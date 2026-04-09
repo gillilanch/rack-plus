@@ -49,6 +49,20 @@ export async function createRack(body: CreateRackBody) {
   return toRackConfiguration(rack as RackWithDevices);
 }
 
+export async function deleteRackById(id: string): Promise<boolean> {
+  try {
+    await prisma.rack.delete({ where: { id } });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function deleteAllRacks(): Promise<{ count: number }> {
+  const result = await prisma.rack.deleteMany({});
+  return { count: result.count };
+}
+
 export async function upsertRackFull(id: string, body: UpdateRackBody) {
   await prisma.$transaction(async (tx) => {
     await tx.rack.update({

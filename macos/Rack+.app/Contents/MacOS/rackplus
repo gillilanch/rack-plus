@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# Double-click launcher — keep Rack+.app at rack+/macos/Rack+.app (inside the repo).
+set -euo pipefail
+
+MACOS_DIR="$(cd "$(dirname "$0")" && pwd)"
+# MacOS -> Contents -> Rack+.app -> macos -> repo root
+REPO_ROOT="$(cd "$MACOS_DIR/../../../.." && pwd)"
+BACKEND_DIR="$REPO_ROOT/backend"
+DIST_JS="$BACKEND_DIR/dist/server.js"
+SUPPORT_DIR="$HOME/Library/Application Support/Rack+"
+PID_FILE="$SUPPORT_DIR/backend.pid"
+LOG_OUT="$SUPPORT_DIR/backend.out.log"
+LOG_ERR="$SUPPORT_DIR/backend.err.log"
+
+load_backend_env() {
+  PORT="${PORT:-4000}"
+  if [[ -f "$BACKEND_DIR/.env" ]]; then
+    set -a
+    # shellcheck source=/dev/null
+    source "$BACKEND_DIR/.env" 2>/dev/null || true
+    set +a
+  fi
+  PORT="${PORT:-4000}"
+}
+
+alert() {
+  osascript -e "display dialog \"$1\" with title \"Rack+\" buttons {\"OK\"} default button \"OK\""
+}
+
+if [[ ! -f "$DIST_JS" ]]; then
+  alert "Backend not built. In Terminal run:\\n\\ncd \"$BACKEND_DIR\" && npm ci && npx prisma migrate deploy && npm run build\\n\\nAlso build the frontend:\\ncd \"$REPO_ROOT/frontend\" && npm ci && npm run build"
+  exit 1
+fi
+
+if ! command -v node >/dev/null 2>&1; then
+  alert "Node.js is not installed or not in PATH. Install Node LTS from nodejs.org or: brew install node"
+  exit 1
+fi
+
+mkdir -p "$SUPPORT_DIR"
+
+is_running() {
+  [[ -f "$PID_FILE" ]] || return 1
+  local pid
+  pid="$(cat "$PID_FILE" 2>/dev/null || true)"
+  [[ -n "${pid:-}" ]] && kill -0 "$pid" 2>/dev/null
+}
+
+if ! is_running; then
+  cd "$BACKEND_DIR"
+  load_backend_env
+  : >>"$LOG_OUT"
+  : >>"$LOG_ERR"
+  nohup env NODE_ENV=production node dist/server.js >>"$LOG_OUT" 2>>"$LOG_ERR" &
+  echo $! >"$PID_FILE"
+  sleep 1
+  if ! is_running; then
+    alert "Server failed to start. See: $LOG_ERR"
+    exit 1
+  fi
+fi
+
+load_backend_env
+open "http://127.0.0.1:${PORT}/"
