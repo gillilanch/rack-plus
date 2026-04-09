@@ -3,15 +3,23 @@ import { X, Plus, Trash2 } from 'lucide-react';
 import { RackDevice } from '../types/rack';
 import { getDeviceDisplayName } from '../utils/deviceDisplay';
 import { Port, ConnectorType } from '../data/equipment';
-import { DEFAULT_INCHES_PER_RU, inchesFromRU, ruFromInches } from '../utils/rackUnits';
+import { DEFAULT_INCHES_PER_RU, DEFAULT_RACK_WIDTH_INCHES, inchesFromRU, ruFromInches } from '../utils/rackUnits';
+import {
+  clampDeviceWidthToRack,
+  clampHorizontalOffset,
+  DEFAULT_DEVICE_WIDTH_INCHES,
+} from '../utils/rackDevicePlacement';
 
 interface RackDeviceEditorProps {
   device: RackDevice | null;
   isOpen: boolean;
   onClose: () => void;
-  onSave: (device: RackDevice) => void;
+  /** Return false to keep the editor open (e.g. placement conflict). */
+  onSave: (device: RackDevice) => void | boolean;
   /** Inches per 1U from rack settings (default 1.75"). */
   inchesPerRU?: number;
+  /** Rack front-panel width for clamping device width / offset. */
+  rackWidthInches?: number;
 }
 
 const connectorTypes: ConnectorType[] = [
@@ -53,11 +61,16 @@ export function RackDeviceEditor({
   onClose,
   onSave,
   inchesPerRU: inchesPerRUProp,
+  rackWidthInches: rackWidthProp,
 }: RackDeviceEditorProps) {
   const inchesPerRU =
     inchesPerRUProp != null && Number.isFinite(inchesPerRUProp) && inchesPerRUProp > 0
       ? inchesPerRUProp
       : DEFAULT_INCHES_PER_RU;
+  const rackWidthInches =
+    rackWidthProp != null && Number.isFinite(rackWidthProp) && rackWidthProp > 0
+      ? rackWidthProp
+      : DEFAULT_RACK_WIDTH_INCHES;
   const [editedDevice, setEditedDevice] = useState<RackDevice | null>(null);
 
   useEffect(() => {
@@ -100,8 +113,26 @@ export function RackDeviceEditor({
       manufacturer: m,
       model: md,
     });
-    onSave({ ...editedDevice, manufacturer: m, model: md, name });
-    onClose();
+    const w =
+      editedDevice.deviceWidthInches != null && Number.isFinite(editedDevice.deviceWidthInches)
+        ? editedDevice.deviceWidthInches
+        : DEFAULT_DEVICE_WIDTH_INCHES;
+    const widthClamped = clampDeviceWidthToRack(w, rackWidthInches);
+    const offRaw =
+      editedDevice.horizontalOffsetInches != null && Number.isFinite(editedDevice.horizontalOffsetInches)
+        ? editedDevice.horizontalOffsetInches
+        : 0;
+    const offClamped = clampHorizontalOffset(offRaw, widthClamped, rackWidthInches);
+    const payload: RackDevice = {
+      ...editedDevice,
+      manufacturer: m,
+      model: md,
+      name,
+      deviceWidthInches: widthClamped,
+      horizontalOffsetInches: offClamped,
+    };
+    const ok = onSave(payload);
+    if (ok !== false) onClose();
   };
 
   return (
@@ -233,6 +264,72 @@ export function RackDeviceEditor({
                 <p className="mt-1 text-xs text-gray-500">
                   Edit U or inches — the other updates from {inchesPerRU}&quot;/U.
                 </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="mb-6 rounded-lg border-2 border-blue-200 bg-blue-50/80 p-4">
+            <h3 className="mb-1 text-sm font-bold text-blue-950">Front panel — side by side on the same U</h3>
+            <p className="mb-3 text-xs leading-relaxed text-blue-900">
+              This rack is <strong>{rackWidthInches}&quot;</strong> wide. Anything that shares the same rack unit (same
+              vertical row) must fit in that width: the <strong>sum of device widths</strong> cannot exceed{' '}
+              {rackWidthInches}&quot;, and horizontal positions must not overlap. Example: two 9.5&quot; devices can sit
+              side by side; two full 19&quot; devices cannot.
+            </p>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <label htmlFor="rack-edit-face-w" className="mb-1 block text-xs font-medium text-gray-600">
+                  Device width (inches)
+                </label>
+                <input
+                  id="rack-edit-face-w"
+                  type="number"
+                  min={0.25}
+                  max={rackWidthInches}
+                  step={0.25}
+                  value={editedDevice.deviceWidthInches ?? DEFAULT_DEVICE_WIDTH_INCHES}
+                  onChange={(e) => {
+                    const n = parseFloat(e.target.value);
+                    const width = Number.isFinite(n) ? clampDeviceWidthToRack(n, rackWidthInches) : DEFAULT_DEVICE_WIDTH_INCHES;
+                    setEditedDevice({
+                      ...editedDevice,
+                      deviceWidthInches: width,
+                      horizontalOffsetInches: clampHorizontalOffset(
+                        editedDevice.horizontalOffsetInches ?? 0,
+                        width,
+                        rackWidthInches,
+                      ),
+                    });
+                  }}
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <p className="mt-1 text-xs text-gray-500">Default 19&quot;. Lower values let multiple units share one U.</p>
+              </div>
+              <div>
+                <label htmlFor="rack-edit-face-x" className="mb-1 block text-xs font-medium text-gray-600">
+                  Offset from left rail (inches)
+                </label>
+                <input
+                  id="rack-edit-face-x"
+                  type="number"
+                  min={0}
+                  max={Math.max(0, rackWidthInches - (editedDevice.deviceWidthInches ?? DEFAULT_DEVICE_WIDTH_INCHES))}
+                  step={0.25}
+                  value={editedDevice.horizontalOffsetInches ?? 0}
+                  onChange={(e) => {
+                    const n = parseFloat(e.target.value);
+                    const width = clampDeviceWidthToRack(
+                      editedDevice.deviceWidthInches ?? DEFAULT_DEVICE_WIDTH_INCHES,
+                      rackWidthInches,
+                    );
+                    const off = Number.isFinite(n)
+                      ? clampHorizontalOffset(n, width, rackWidthInches)
+                      : 0;
+                    setEditedDevice({ ...editedDevice, horizontalOffsetInches: off, deviceWidthInches: width });
+                  }}
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <p className="mt-1 text-xs text-gray-500">Slide left/right along the rack face when placed.</p>
               </div>
             </div>
           </div>

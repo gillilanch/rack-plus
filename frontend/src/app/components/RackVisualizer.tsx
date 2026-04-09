@@ -13,6 +13,11 @@ import { getDeviceDisplayName } from '../utils/deviceDisplay';
 import { RackCableOverlay } from './RackCableOverlay';
 import { Trash2, Edit, GripVertical } from 'lucide-react';
 import { DEFAULT_INCHES_PER_RU, DEFAULT_RACK_WIDTH_INCHES, rackFaceWidthPx } from '../utils/rackUnits';
+import {
+  getDeviceWidthInches,
+  horizontalOffsetInchesFromDropX,
+  normalizeDeviceHorizontalFields,
+} from '../utils/rackDevicePlacement';
 
 const STANDALONE_UNIT_PX = 40;
 const MIN_UNIT_PX = 3;
@@ -26,7 +31,7 @@ function assignRef<T>(ref: Ref<T> | undefined, value: T | null) {
 interface RackVisualizerProps {
   totalHeight: number;
   devices: RackDevice[];
-  onUpdateDevicePosition: (deviceId: string, position: number) => void;
+  onUpdateDevicePosition: (deviceId: string, position: number, horizontalOffsetInches?: number) => void;
   onRemoveDevice: (deviceId: string) => void;
   onEditDevice: (device: RackDevice) => void;
   inchesPerRU?: number;
@@ -84,10 +89,21 @@ interface DraggableDeviceProps {
   onRemove: (deviceId: string) => void;
 }
 
-function DraggableDevice({ device, unitHeightPx, onEdit, onRemove }: DraggableDeviceProps) {
+function DraggableDevice({
+  device,
+  unitHeightPx,
+  rackWidthInches,
+  onEdit,
+  onRemove,
+}: DraggableDeviceProps & { rackWidthInches: number }) {
+  const rw = rackWidthInches > 0 ? rackWidthInches : DEFAULT_RACK_WIDTH_INCHES;
+  const placed = normalizeDeviceHorizontalFields(device, rw);
+  const widthPct = (getDeviceWidthInches(placed) / rw) * 100;
+  const leftPct = ((placed.horizontalOffsetInches ?? 0) / rw) * 100;
+
   const [{ isDragging }, drag] = useDrag(() => ({
     type: 'device',
-    item: { id: device.id, heightInU: device.heightInU },
+    item: { id: device.id, heightInU: device.heightInU, deviceWidthInches: getDeviceWidthInches(placed) },
     collect: (monitor) => ({
       isDragging: monitor.isDragging(),
     }),
@@ -99,8 +115,8 @@ function DraggableDevice({ device, unitHeightPx, onEdit, onRemove }: DraggableDe
     <div
       ref={drag}
       data-rack-device-id={device.id}
-      style={{ height: `${heightPx}px` }}
-      className={`absolute left-0 right-0 z-[6] cursor-grab rounded border-2 bg-white pl-3 shadow-md transition-all active:cursor-grabbing group ${
+      style={{ height: `${heightPx}px`, left: `${leftPct}%`, width: `${widthPct}%` }}
+      className={`pointer-events-auto absolute z-[6] cursor-grab rounded border-2 bg-white pl-3 shadow-md transition-all active:cursor-grabbing group ${
         isDragging ? 'border-blue-400 opacity-50' : 'border-gray-400 hover:border-blue-500'
       }`}
     >
@@ -137,7 +153,7 @@ function DraggableDevice({ device, unitHeightPx, onEdit, onRemove }: DraggableDe
             {getDeviceDisplayName(device)}
           </div>
           <div className="truncate text-[10px] text-gray-500 sm:text-xs">
-            {device.heightInU}U • {device.category}
+            {device.heightInU}U • {getDeviceWidthInches(placed)}&quot; • {device.category}
           </div>
         </div>
       </div>
@@ -152,7 +168,7 @@ interface DroppableRackProps {
   rackWidthPx: number;
   rackHeightPx: number;
   rackContainerId: string;
-  onUpdateDevicePosition: (deviceId: string, position: number) => void;
+  onUpdateDevicePosition: (deviceId: string, position: number, horizontalOffsetInches?: number) => void;
   onEditDevice: (device: RackDevice) => void;
   onRemoveDevice: (deviceId: string) => void;
   stretchWidth?: boolean;
@@ -160,6 +176,7 @@ interface DroppableRackProps {
   connections?: RackConnection[];
   inchesPerRU?: number;
   slackAllowanceFeet?: number;
+  rackWidthInches: number;
   onAddConnection?: (c: RackConnection) => void;
   onPortMismatch?: (p: { from: RackDevice; to: RackDevice; extraSlackInches: number }) => void;
   onRemoveConnection?: (connectionId: string) => void;
@@ -183,14 +200,18 @@ function DroppableRack({
   onAddConnection,
   onPortMismatch,
   onRemoveConnection,
+  rackWidthInches,
 }: DroppableRackProps) {
   const unitPxRef = useRef(unitHeightPx);
   unitPxRef.current = unitHeightPx;
+  const devicesRef = useRef(devices);
+  devicesRef.current = devices;
+  const rw = rackWidthInches > 0 ? rackWidthInches : DEFAULT_RACK_WIDTH_INCHES;
 
   const [, drop] = useDrop(
     () => ({
       accept: 'device',
-      drop: (item: { id: string; heightInU: number }, monitor) => {
+      drop: (item: { id: string; heightInU: number; deviceWidthInches?: number }, monitor) => {
         const offset = monitor.getClientOffset();
         if (!offset) return;
         const rackElement = document.getElementById(rackContainerId);
@@ -204,10 +225,22 @@ function DroppableRack({
           totalHeight,
           itemHeightInU: item.heightInU,
         });
-        if (position !== null) onUpdateDevicePosition(item.id, position);
+        if (position === null) return;
+        const fromList = devicesRef.current.find((d) => d.id === item.id);
+        const dw =
+          item.deviceWidthInches ??
+          (fromList ? getDeviceWidthInches(normalizeDeviceHorizontalFields(fromList, rw)) : getDeviceWidthInches({}));
+        const horizontalOffsetInches = horizontalOffsetInchesFromDropX({
+          clientX: offset.x,
+          rackLeft: rect.left,
+          rackWidthPx: rect.width,
+          rackWidthInches: rw,
+          deviceWidthInches: dw,
+        });
+        onUpdateDevicePosition(item.id, position, horizontalOffsetInches);
       },
     }),
-    [totalHeight, onUpdateDevicePosition, rackContainerId],
+    [totalHeight, onUpdateDevicePosition, rackContainerId, rw],
   );
 
   const setDropAndCaptureRef = useCallback(
@@ -241,11 +274,17 @@ function DroppableRack({
         .filter((d) => d.rackPosition !== undefined)
         .map((device) => {
           const topPosition = (totalHeight - device.rackPosition! - device.heightInU) * unitHeightPx;
+          const rowH = device.heightInU * unitHeightPx;
           return (
-            <div key={device.id} className="absolute left-0 right-0" style={{ top: `${topPosition}px` }}>
+            <div
+              key={device.id}
+              className="absolute inset-x-0"
+              style={{ top: `${topPosition}px`, height: `${rowH}px` }}
+            >
               <DraggableDevice
                 device={device}
                 unitHeightPx={unitHeightPx}
+                rackWidthInches={rw}
                 onEdit={onEditDevice}
                 onRemove={onRemoveDevice}
               />
@@ -265,6 +304,7 @@ function DroppableRack({
             connections={connections}
             inchesPerRU={inchesPerRU}
             slackAllowanceFeet={slackAllowanceFeet}
+            rackWidthInches={rw}
             onAddConnection={onAddConnection}
             onPortMismatch={onPortMismatch}
             onRemoveConnection={onRemoveConnection}
@@ -321,6 +361,7 @@ function StandaloneRack(
         rackWidthPx={rackWidthPx}
         rackHeightPx={rackHeightPx}
         rackCaptureRef={rackCaptureRef}
+        rackWidthInches={rackWidthInches}
         onUpdateDevicePosition={onUpdateDevicePosition}
         onEditDevice={onEditDevice}
         onRemoveDevice={onRemoveDevice}
@@ -393,8 +434,10 @@ function FillParentRack(
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col gap-3">
       <p className="shrink-0 text-center text-sm text-gray-600">
-        Drag from the list onto the rack. Drag a placed device from anywhere on its box; drop on the unassigned
-        list to return it to the pool.
+        Drag from the list onto the rack. Drop left/right to set horizontal offset. On the same rack U, the{' '}
+        <strong>sum of device widths</strong> cannot exceed the rack width ({rackWidthInches}&quot;); use the pencil on
+        a device to
+        set width and offset. Drop on the unassigned list to return a device to the pool.
       </p>
       <p className="shrink-0 text-center text-xs text-gray-500">
         Total Height: {totalHeight}U ({(totalHeight * inchesPerRU).toFixed(1)}&quot; /{' '}
@@ -413,6 +456,7 @@ function FillParentRack(
           rackWidthPx={rackWidthPx}
           rackHeightPx={rackHeightPx}
           rackCaptureRef={rackCaptureRef}
+          rackWidthInches={rackWidthInches}
           onUpdateDevicePosition={onUpdateDevicePosition}
           onEditDevice={onEditDevice}
           onRemoveDevice={onRemoveDevice}

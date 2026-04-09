@@ -4,6 +4,9 @@ import * as rackRepo from '../repos/rackRepo';
 
 export const racksRouter = Router();
 
+const DUPLICATE_NAME =
+  'A rack already exists with that name. Please choose a different name.';
+
 racksRouter.get('/', async (_req, res, next) => {
   try {
     const rows = await rackRepo.listRacks();
@@ -12,7 +15,11 @@ racksRouter.get('/', async (_req, res, next) => {
         id: r.id,
         name: r.name,
         totalHeight: r.totalHeightU,
+        rackWidthInches: r.rackWidthInches,
+        deviceCount: r._count.devices,
         updatedAt: r.updatedAt.toISOString(),
+        savedByDisplayName: r.savedByDisplayName,
+        savedByVerified: r.savedByVerified,
       })),
     );
   } catch (e) {
@@ -36,6 +43,11 @@ racksRouter.get('/:id', async (req, res, next) => {
 racksRouter.post('/', async (req, res, next) => {
   try {
     const body = createRackBodySchema.parse(req.body);
+    const conflict = await rackRepo.findRackNameConflict(body.name);
+    if (conflict) {
+      res.status(409).json({ error: DUPLICATE_NAME });
+      return;
+    }
     const config = await rackRepo.createRack(body);
     res.status(201).json(config);
   } catch (e) {
@@ -46,6 +58,11 @@ racksRouter.post('/', async (req, res, next) => {
 racksRouter.put('/:id', async (req, res, next) => {
   try {
     const body = updateRackBodySchema.parse(req.body);
+    const conflict = await rackRepo.findRackNameConflict(body.name, req.params.id);
+    if (conflict) {
+      res.status(409).json({ error: DUPLICATE_NAME });
+      return;
+    }
     const config = await rackRepo.upsertRackFull(req.params.id, body);
     res.json(config);
   } catch (e) {

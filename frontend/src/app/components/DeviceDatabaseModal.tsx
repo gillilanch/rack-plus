@@ -1,7 +1,18 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { X, Search, ChevronDown, ChevronRight, Copy, Pencil, Trash2, Plus, Database } from 'lucide-react';
+import {
+  X,
+  Search,
+  ChevronDown,
+  ChevronRight,
+  Pencil,
+  Trash2,
+  Plus,
+  Database,
+  Users,
+} from 'lucide-react';
 import type { Device } from '../data/equipment';
 import { devices as builtInDevices } from '../data/equipment';
+import { listFoxEmployees } from '../api/employees';
 import {
   deleteCustomDevice,
   FOX_EQUIPMENT_CHANGED_EVENT,
@@ -9,6 +20,13 @@ import {
   saveCustomDevice,
   updateCustomDevice,
 } from '../utils/customDevices';
+import {
+  addFoxEmployeeExtra,
+  FOX_EMPLOYEES_CHANGED_EVENT,
+  getFoxEmployeeExtras,
+  mergeFoxEmployeeLists,
+  removeFoxEmployeeExtra,
+} from '../utils/foxEmployeeExtras';
 import { AddDeviceModal } from './AddDeviceModal';
 import { getDeviceDisplayName, getDeviceSearchBlob } from '../utils/deviceDisplay';
 
@@ -17,32 +35,76 @@ interface DeviceDatabaseModalProps {
   onClose: () => void;
 }
 
+type DbTab = 'equipment' | 'employees';
+
 function matchesSearch(device: Device, q: string): boolean {
   if (!q.trim()) return true;
   const s = q.trim().toLowerCase();
+  const ru = device.heightInU != null ? `${device.heightInU}u` : '';
+  const rw = device.deviceWidthInches != null ? `${device.deviceWidthInches}` : '';
   return (
     getDeviceSearchBlob(device).includes(s) ||
     device.category.toLowerCase().includes(s) ||
+    ru.includes(s) ||
+    rw.includes(s) ||
     device.ports.some((p) => p.type.toLowerCase().includes(s))
   );
 }
 
+function matchesName(n: string, q: string): boolean {
+  if (!q.trim()) return true;
+  return n.toLowerCase().includes(q.trim().toLowerCase());
+}
+
 export function DeviceDatabaseModal({ isOpen, onClose }: DeviceDatabaseModalProps) {
-  const [tab, setTab] = useState<'catalog' | 'fox'>('fox');
+  const [tab, setTab] = useState<DbTab>('equipment');
   const [search, setSearch] = useState('');
+  const [employeeSearch, setEmployeeSearch] = useState('');
   const [custom, setCustom] = useState<Device[]>([]);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingDevice, setEditingDevice] = useState<Device | null>(null);
   const [cloneSource, setCloneSource] = useState<Device | null>(null);
 
+  const [directoryNames, setDirectoryNames] = useState<string[]>([]);
+  const [directoryLoading, setDirectoryLoading] = useState(false);
+  const [directoryError, setDirectoryError] = useState<string | null>(null);
+  const [extraNames, setExtraNames] = useState<string[]>([]);
+  const [newEmployeeName, setNewEmployeeName] = useState('');
+  const [newEmployeeError, setNewEmployeeError] = useState<string | null>(null);
+
   const refreshCustom = useCallback(() => setCustom(getCustomDevices()), []);
+  const refreshExtras = useCallback(() => setExtraNames(getFoxEmployeeExtras()), []);
 
   useEffect(() => {
     if (!isOpen) return;
     refreshCustom();
     setSearch('');
+    setEmployeeSearch('');
+    setNewEmployeeName('');
+    setNewEmployeeError(null);
   }, [isOpen, refreshCustom]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let cancelled = false;
+    setDirectoryLoading(true);
+    setDirectoryError(null);
+    void listFoxEmployees()
+      .then((names) => {
+        if (!cancelled) setDirectoryNames(names);
+      })
+      .catch(() => {
+        if (!cancelled) setDirectoryError('Could not load the Fox directory from this server.');
+      })
+      .finally(() => {
+        if (!cancelled) setDirectoryLoading(false);
+      });
+    refreshExtras();
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, refreshExtras]);
 
   useEffect(() => {
     const fn = () => refreshCustom();
@@ -50,13 +112,30 @@ export function DeviceDatabaseModal({ isOpen, onClose }: DeviceDatabaseModalProp
     return () => window.removeEventListener(FOX_EQUIPMENT_CHANGED_EVENT, fn);
   }, [refreshCustom]);
 
-  const filteredBuiltIn = useMemo(
-    () => builtInDevices.filter((d) => matchesSearch(d, search)),
-    [search],
-  );
+  useEffect(() => {
+    const fn = () => refreshExtras();
+    window.addEventListener(FOX_EMPLOYEES_CHANGED_EVENT, fn);
+    return () => window.removeEventListener(FOX_EMPLOYEES_CHANGED_EVENT, fn);
+  }, [refreshExtras]);
+
   const filteredCustom = useMemo(
     () => custom.filter((d) => matchesSearch(d, search)),
     [custom, search],
+  );
+
+  const filteredDirectory = useMemo(
+    () => directoryNames.filter((n) => matchesName(n, employeeSearch)),
+    [directoryNames, employeeSearch],
+  );
+
+  const filteredExtras = useMemo(
+    () => extraNames.filter((n) => matchesName(n, employeeSearch)),
+    [extraNames, employeeSearch],
+  );
+
+  const employeeUniqueCount = useMemo(
+    () => mergeFoxEmployeeLists(directoryNames).length,
+    [directoryNames, extraNames],
   );
 
   const existingNamesForForm = useMemo(() => {
@@ -92,12 +171,6 @@ export function DeviceDatabaseModal({ isOpen, onClose }: DeviceDatabaseModalProp
     setEditorOpen(true);
   };
 
-  const openClone = (d: Device) => {
-    setEditingDevice(null);
-    setCloneSource(d);
-    setEditorOpen(true);
-  };
-
   const handleSaveDevice = (device: Device) => {
     if (editingDevice) {
       updateCustomDevice(device);
@@ -111,6 +184,32 @@ export function DeviceDatabaseModal({ isOpen, onClose }: DeviceDatabaseModalProp
     if (!window.confirm(`Remove “${getDeviceDisplayName(d)}” from your Fox equipment database?`)) return;
     deleteCustomDevice(d.id);
     refreshCustom();
+  };
+
+  const handleAddEmployee = () => {
+    setNewEmployeeError(null);
+    const t = newEmployeeName.trim();
+    if (!t) {
+      setNewEmployeeError('Enter a name.');
+      return;
+    }
+    if (directoryNames.some((n) => n.toLowerCase() === t.toLowerCase())) {
+      setNewEmployeeError('That name is already in the Fox directory on this server.');
+      return;
+    }
+    const r = addFoxEmployeeExtra(t);
+    if (!r.ok) {
+      setNewEmployeeError(r.reason);
+      return;
+    }
+    setNewEmployeeName('');
+    refreshExtras();
+  };
+
+  const handleRemoveExtra = (name: string) => {
+    if (!window.confirm(`Remove “${name}” from names added on this browser?`)) return;
+    removeFoxEmployeeExtra(name);
+    refreshExtras();
   };
 
   if (!isOpen) return null;
@@ -148,16 +247,17 @@ export function DeviceDatabaseModal({ isOpen, onClose }: DeviceDatabaseModalProp
           </div>
 
           <p className="border-b border-gray-100 px-5 py-3 text-sm text-gray-600">
-            Built-in catalog is read-only. Your <span className="font-medium">Fox equipment database</span> is stored in
-            this browser and is used for manual add autocomplete and cable suggestions.
+            <span className="font-medium">Fox equipment</span> is stored in this browser and powers manual add
+            autocomplete and cable suggestions. <span className="font-medium">Fox employees</span> lists the
+            directory from this server plus any names you add locally (also used when saving a rack).
           </p>
 
           <div className="flex gap-1 border-b border-gray-200 px-5 pt-3">
             <button
               type="button"
-              onClick={() => setTab('fox')}
+              onClick={() => setTab('equipment')}
               className={`rounded-t-lg px-4 py-2 text-sm font-medium transition-colors ${
-                tab === 'fox'
+                tab === 'equipment'
                   ? 'bg-gray-100 text-gray-900'
                   : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
               }`}
@@ -166,32 +266,80 @@ export function DeviceDatabaseModal({ isOpen, onClose }: DeviceDatabaseModalProp
             </button>
             <button
               type="button"
-              onClick={() => setTab('catalog')}
-              className={`rounded-t-lg px-4 py-2 text-sm font-medium transition-colors ${
-                tab === 'catalog'
+              onClick={() => setTab('employees')}
+              className={`flex items-center gap-1.5 rounded-t-lg px-4 py-2 text-sm font-medium transition-colors ${
+                tab === 'employees'
                   ? 'bg-gray-100 text-gray-900'
                   : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
               }`}
             >
-              Built-in catalog ({builtInDevices.length})
+              <Users className="size-4" />
+              Fox employees ({employeeUniqueCount})
             </button>
           </div>
 
-          <div className="shrink-0 border-b border-gray-100 px-5 py-3">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-gray-400" />
-              <input
-                type="search"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search by name, category, or connector…"
-                className="w-full rounded-lg border border-gray-300 py-2 pl-10 pr-3 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
+          {tab === 'equipment' && (
+            <div className="shrink-0 border-b border-gray-100 px-5 py-3">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-gray-400" />
+                <input
+                  type="search"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search Fox equipment by name, category, or connector…"
+                  className="w-full rounded-lg border border-gray-300 py-2 pl-10 pr-3 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
             </div>
-          </div>
+          )}
+
+          {tab === 'employees' && (
+            <div className="shrink-0 space-y-3 border-b border-gray-100 px-5 py-3">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                <div className="min-w-0 flex-1">
+                  <label htmlFor="fox-emp-add" className="mb-1 block text-xs font-semibold uppercase text-gray-500">
+                    Add name (this browser)
+                  </label>
+                  <input
+                    id="fox-emp-add"
+                    type="text"
+                    value={newEmployeeName}
+                    onChange={(e) => {
+                      setNewEmployeeName(e.target.value);
+                      setNewEmployeeError(null);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleAddEmployee();
+                    }}
+                    placeholder="e.g. Jamie Fox"
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={handleAddEmployee}
+                  className="flex shrink-0 items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+                >
+                  <Plus className="size-4" />
+                  Add name
+                </button>
+              </div>
+              {newEmployeeError && <p className="text-sm text-red-600">{newEmployeeError}</p>}
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-gray-400" />
+                <input
+                  type="search"
+                  value={employeeSearch}
+                  onChange={(e) => setEmployeeSearch(e.target.value)}
+                  placeholder="Search employees…"
+                  className="w-full rounded-lg border border-gray-300 py-2 pl-10 pr-3 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+            </div>
+          )}
 
           <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-            {tab === 'fox' && (
+            {tab === 'equipment' && (
               <div className="space-y-3">
                 <button
                   type="button"
@@ -199,12 +347,12 @@ export function DeviceDatabaseModal({ isOpen, onClose }: DeviceDatabaseModalProp
                   className="flex w-full items-center justify-center gap-2 rounded-lg border-2 border-dashed border-blue-300 bg-blue-50/50 py-3 text-sm font-medium text-blue-800 hover:bg-blue-50"
                 >
                   <Plus className="size-4" />
-                  Add device to Fox database
+                  Add device to Fox equipment
                 </button>
 
                 {filteredCustom.length === 0 && (
                   <p className="py-8 text-center text-sm text-gray-500">
-                    {search.trim() ? 'No saved devices match your search.' : 'No custom devices yet.'}
+                    {search.trim() ? 'No Fox equipment matches your search.' : 'No Fox equipment saved yet.'}
                   </p>
                 )}
 
@@ -212,7 +360,6 @@ export function DeviceDatabaseModal({ isOpen, onClose }: DeviceDatabaseModalProp
                   <DeviceDbRow
                     key={d.id}
                     device={d}
-                    variant="fox"
                     expanded={expandedIds.has(d.id)}
                     onToggle={() => toggleExpand(d.id)}
                     onEdit={() => openEdit(d)}
@@ -222,21 +369,68 @@ export function DeviceDatabaseModal({ isOpen, onClose }: DeviceDatabaseModalProp
               </div>
             )}
 
-            {tab === 'catalog' && (
-              <div className="space-y-3">
-                {filteredBuiltIn.length === 0 && (
-                  <p className="py-8 text-center text-sm text-gray-500">No devices match your search.</p>
+            {tab === 'employees' && (
+              <div className="space-y-6">
+                {directoryLoading && (
+                  <p className="text-sm text-gray-500">Loading Fox directory from server…</p>
                 )}
-                {filteredBuiltIn.map((d) => (
-                  <DeviceDbRow
-                    key={d.id}
-                    device={d}
-                    variant="catalog"
-                    expanded={expandedIds.has(d.id)}
-                    onToggle={() => toggleExpand(d.id)}
-                    onCopy={() => openClone(d)}
-                  />
-                ))}
+                {directoryError && (
+                  <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                    {directoryError} You can still manage names added on this browser.
+                  </p>
+                )}
+
+                <section>
+                  <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-gray-500">
+                    Fox directory 
+                  </h3>
+                  {!directoryLoading && filteredDirectory.length === 0 && (
+                    <p className="text-sm text-gray-500">
+                      {employeeSearch.trim() ? 'No directory names match your search.' : 'No names returned from server.'}
+                    </p>
+                  )}
+                  <ul className="space-y-1">
+                    {filteredDirectory.map((name) => (
+                      <li
+                        key={`dir:${name}`}
+                        className="flex items-center justify-between gap-2 rounded-lg border border-gray-100 bg-gray-50/80 px-3 py-2 text-sm"
+                      >
+                        <span className="min-w-0 truncate font-medium text-gray-900">{name}</span>
+                        <span className="shrink-0 rounded bg-white px-2 py-0.5 text-[10px] font-semibold uppercase text-gray-600 ring-1 ring-gray-200">
+                          Server
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+
+                <section>
+                 
+                  <ul className="space-y-1">
+                    {filteredExtras.map((name) => (
+                      <li
+                        key={`extra:${name}`}
+                        className="flex items-center justify-between gap-2 rounded-lg border border-amber-100 bg-amber-50/50 px-3 py-2 text-sm"
+                      >
+                        <span className="min-w-0 truncate font-medium text-gray-900">{name}</span>
+                        <div className="flex shrink-0 items-center gap-2">
+                          <span className="rounded bg-white px-2 py-0.5 text-[10px] font-semibold uppercase text-amber-900 ring-1 ring-amber-200">
+                            Local
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveExtra(name)}
+                            className="rounded p-1.5 text-red-600 hover:bg-red-50"
+                            title="Remove from this browser"
+                            aria-label={`Remove ${name}`}
+                          >
+                            <Trash2 className="size-4" />
+                          </button>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
               </div>
             )}
           </div>
@@ -257,20 +451,16 @@ export function DeviceDatabaseModal({ isOpen, onClose }: DeviceDatabaseModalProp
 
 function DeviceDbRow({
   device,
-  variant,
   expanded,
   onToggle,
   onEdit,
   onDelete,
-  onCopy,
 }: {
   device: Device;
-  variant: 'catalog' | 'fox';
   expanded: boolean;
   onToggle: () => void;
   onEdit?: () => void;
   onDelete?: () => void;
-  onCopy?: () => void;
 }) {
   return (
     <div className="rounded-lg border border-gray-200 bg-white shadow-sm">
@@ -286,32 +476,16 @@ function DeviceDbRow({
         <div className="min-w-0 flex-1">
           <div className="truncate font-medium text-gray-900">{getDeviceDisplayName(device)}</div>
           <div className="text-xs text-gray-500">
-            {device.category} · {device.ports.length} port{device.ports.length !== 1 ? 's' : ''}
-            {variant === 'catalog' && (
-              <span className="ml-2 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-gray-600">
-                Built-in
-              </span>
-            )}
-            {variant === 'fox' && (
-              <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-amber-800">
-                Fox
-              </span>
-            )}
+            {device.heightInU != null ? `${device.heightInU}U` : '1U'} ·{' '}
+            {device.deviceWidthInches != null ? `${device.deviceWidthInches}"` : '19"'} · {device.category} ·{' '}
+            {device.ports.length} port{device.ports.length !== 1 ? 's' : ''}
+            <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-amber-800">
+              Fox equipment
+            </span>
           </div>
         </div>
         <div className="flex shrink-0 gap-1">
-          {variant === 'catalog' && onCopy && (
-            <button
-              type="button"
-              onClick={onCopy}
-              className="flex items-center gap-1 rounded-lg border border-gray-200 px-2 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
-              title="Copy to Fox database"
-            >
-              <Copy className="size-3.5" />
-              Copy
-            </button>
-          )}
-          {variant === 'fox' && onEdit && (
+          {onEdit && (
             <button
               type="button"
               onClick={onEdit}
@@ -321,7 +495,7 @@ function DeviceDbRow({
               <Pencil className="size-4" />
             </button>
           )}
-          {variant === 'fox' && onDelete && (
+          {onDelete && (
             <button
               type="button"
               onClick={onDelete}

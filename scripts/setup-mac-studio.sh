@@ -34,7 +34,11 @@ LOCAL_URL="postgresql://${USER_NAME}@localhost:5432/rackapp"
 ENV_FILE="$REPO_ROOT/backend/.env"
 
 if [[ ! -f "$ENV_FILE" ]]; then
-  cp "$REPO_ROOT/backend/.env.example" "$ENV_FILE"
+  if [[ -f "$REPO_ROOT/backend/.env.macstudio.example" ]]; then
+    cp "$REPO_ROOT/backend/.env.macstudio.example" "$ENV_FILE"
+  else
+    cp "$REPO_ROOT/backend/.env.example" "$ENV_FILE"
+  fi
 fi
 if grep -q '^DATABASE_URL=' "$ENV_FILE" 2>/dev/null; then
   sed -i '' "s|^DATABASE_URL=.*|DATABASE_URL=\"${LOCAL_URL}\"|" "$ENV_FILE"

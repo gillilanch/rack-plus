@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { X, Loader2, FolderOpen } from 'lucide-react';
+import { X, Loader2, FolderOpen, BadgeCheck } from 'lucide-react';
 import { listRacks, type RackSummary } from '../api/racks';
 import { formatDistanceToNow } from 'date-fns';
 
@@ -78,15 +78,30 @@ export function CurrentRacksModal({ isOpen, onClose, currentRackId, onOpenRack }
                   <li key={r.id}>
                     <div className="flex items-center gap-2 rounded-lg border border-gray-100 px-3 py-2 hover:bg-gray-50">
                       <div className="min-w-0 flex-1">
-                        <div className="truncate font-medium text-gray-900">
-                          {r.name}
-                          {active && (
-                            <span className="ml-2 text-xs font-normal text-blue-600">(current)</span>
+                        <div className="flex min-w-0 items-center gap-1.5 truncate font-medium text-gray-900">
+                          {r.savedByVerified && (
+                            <BadgeCheck
+                              className="size-5 shrink-0 text-[#003366]"
+                              aria-label="Verified save"
+                              title="Verified Fox employee save"
+                            />
                           )}
+                          <span className="truncate">
+                            {r.name}
+                            {active && (
+                              <span className="ml-2 text-xs font-normal text-blue-600">(current)</span>
+                            )}
+                          </span>
                         </div>
                         <div className="text-xs text-gray-500">
-                          {r.totalHeight}U · updated{' '}
-                          {formatDistanceToNow(new Date(r.updatedAt), { addSuffix: true })}
+                          {r.deviceCount} device{r.deviceCount !== 1 ? 's' : ''} · {r.totalHeight}U ×{' '}
+                          {r.rackWidthInches}&quot; ·{' '}
+                          {r.savedByDisplayName?.trim() ? (
+                            <>by {r.savedByDisplayName}</>
+                          ) : (
+                            <>by Unknown</>
+                          )}{' '}
+                          · updated {formatDistanceToNow(new Date(r.updatedAt), { addSuffix: true })}
                         </div>
                       </div>
                       <button

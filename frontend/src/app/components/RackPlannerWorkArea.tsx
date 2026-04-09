@@ -4,6 +4,7 @@ import type { RackConnection, RackDevice } from '../types/rack';
 import { CSVImport, type CsvImportCompletePayload, type CsvRackExportContext } from './CSVImport';
 import { ManualDeviceAdd } from './ManualDeviceAdd';
 import { RackCableConnectionsPanel } from './RackCableConnectionsPanel';
+import { DEFAULT_RACK_WIDTH_INCHES } from '../utils/rackUnits';
 import { RackVisualizer } from './RackVisualizer';
 import { UnassignedDevices } from './UnassignedDevices';
 
@@ -13,6 +14,7 @@ import { UnassignedDevices } from './UnassignedDevices';
  */
 export function RackDevicesColumn(props: {
   devices: RackDevice[];
+  rackWidthInches?: number;
   onEditDevice: (d: RackDevice) => void;
   onRemoveDevice: (id: string) => void;
   onReturnFromRack?: (deviceId: string) => void;
@@ -27,11 +29,13 @@ export function RackDevicesColumn(props: {
     category: string;
     heightInU: number;
     heightInches?: number;
+    deviceWidthInches?: number;
     ports?: Port[];
   }) => void;
 }) {
   const {
     devices,
+    rackWidthInches,
     onEditDevice,
     onRemoveDevice,
     onReturnFromRack,
@@ -46,6 +50,7 @@ export function RackDevicesColumn(props: {
       <div className="min-h-[10rem] shrink-0 rounded-lg border border-gray-100 bg-slate-50/70 p-2 lg:min-h-0 lg:flex-1 lg:overflow-hidden">
         <UnassignedDevices
           devices={devices}
+          rackWidthInches={rackWidthInches}
           onEditDevice={onEditDevice}
           onRemoveDevice={onRemoveDevice}
           onReturnFromRack={onReturnFromRack}
@@ -79,7 +84,7 @@ export function RackPreviewColumn(props: {
   rackWidthInches?: number;
   devices: RackDevice[];
   rackCaptureRef?: Ref<HTMLDivElement | null>;
-  onUpdateDevicePosition: (deviceId: string, position: number) => void;
+  onUpdateDevicePosition: (deviceId: string, position: number, horizontalOffsetInches?: number) => void;
   onRemoveDevice: (deviceId: string) => void;
   onEditDevice: (device: RackDevice) => void;
   connections?: RackConnection[];
@@ -88,8 +93,13 @@ export function RackPreviewColumn(props: {
   onPortMismatch?: (p: { from: RackDevice; to: RackDevice; extraSlackInches: number }) => void;
   onRemoveConnection?: (connectionId: string) => void;
 }) {
+  const rw = props.rackWidthInches ?? DEFAULT_RACK_WIDTH_INCHES;
   return (
     <section className="rack-preview-column flex min-h-[min(60vh,22rem)] flex-col rounded-xl border-2 border-slate-200 bg-white p-6 shadow-xl lg:h-full lg:min-h-0 [contain:layout]">
+      <div className="mb-3 shrink-0 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950">
+        <strong>Rack {rw}&quot; wide.</strong> Gear on the same U shares that space: total device widths must stay ≤ {rw}
+        &quot; and boxes must not overlap. Open a device with the pencil to set width and left offset.
+      </div>
       <div className="flex min-h-0 flex-1 flex-col">
         <RackVisualizer
           fillParent
@@ -132,9 +142,10 @@ export function RackPlannerWorkArea(props: {
     category: string;
     heightInU: number;
     heightInches?: number;
+    deviceWidthInches?: number;
     ports?: Port[];
   }) => void;
-  onUpdateDevicePosition: (deviceId: string, position: number) => void;
+  onUpdateDevicePosition: (deviceId: string, position: number, horizontalOffsetInches?: number) => void;
   connections?: RackConnection[];
   slackAllowanceFeet?: number;
   onAddConnection?: (c: RackConnection) => void;
@@ -145,6 +156,7 @@ export function RackPlannerWorkArea(props: {
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 lg:items-stretch">
       <RackDevicesColumn
         devices={props.devices}
+        rackWidthInches={props.rackWidthInches}
         onEditDevice={props.onEditDevice}
         onRemoveDevice={props.onRemoveDevice}
         onReturnFromRack={props.onReturnFromRack}

@@ -10,6 +10,10 @@ datasource db {
 model Rack {
   id             String       @id @default(uuid())
   name           String
+  /// Who saved the rack (Fox employee display name, or "Guest").
+  savedByDisplayName String?  @map("saved_by_display_name")
+  /// True when savedByDisplayName matches the Fox employee directory (case-insensitive).
+  savedByVerified    Boolean  @default(false) @map("saved_by_verified")
   totalHeightU   Int          @map("total_height_u")
   /// Inches per 1U (RU), e.g. 1.75 for standard racks.
   inchesPerRU    Float        @default(1.75) @map("inches_per_ru")
@@ -34,6 +38,10 @@ model RackDevice {
   category             String
   heightInU            Int          @map("height_in_u")
   rackPosition         Int?         @map("rack_position")
+  /// Front-panel width in inches (default 19"); must fit within rack width for side-by-side placement.
+  deviceWidthInches    Float        @default(19) @map("device_width_inches")
+  /// Horizontal offset from left rail in inches (0 = flush left within rack width).
+  horizontalOffsetInches Float     @default(0) @map("horizontal_offset_inches")
   physicalHeightInches Decimal?     @map("physical_height_inches") @db.Decimal(10, 2)
   catalogDeviceId      String?      @map("catalog_device_id")
   sortOrder            Int          @default(0) @map("sort_order")

@@ -25,6 +25,10 @@ export interface Device {
   model?: string;
   category: 'Camera' | 'Laptop' | 'Recording Deck' | 'Audio' | 'Monitor' | 'Interface';
   ports: Port[];
+  /** Default rack height (U) when adding from Fox/custom database (optional on built-in catalog). */
+  heightInU?: number;
+  /** Default front-panel width in inches when placed on the rack (optional). */
+  deviceWidthInches?: number;
 }
 
 export interface Cable {

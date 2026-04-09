@@ -4,6 +4,10 @@ export interface RackDevice extends Device {
   heightInU: number; // Rack units (1U = 1.75 inches)
   rackPosition?: number; // Starting U position (from bottom)
   physicalHeightInches?: number; // Original height in inches
+  /** Front-panel width in inches; default 19. Used with rack width for side-by-side placement. */
+  deviceWidthInches?: number;
+  /** Inches from left rail; default 0. */
+  horizontalOffsetInches?: number;
 }
 
 /** Which side of the device row the cable meets in the rack diagram. */
@@ -33,6 +37,10 @@ export interface RackConnection {
 export interface RackConfiguration {
   id: string;
   name: string;
+  /** Who saved (Fox employee name or Guest); from server after save. */
+  savedByDisplayName?: string;
+  /** True when name matched Fox employee directory. */
+  savedByVerified?: boolean;
   totalHeight: number; // Total rack units
   /** Inches per 1U (RU); default 1.75" for standard racks. */
   inchesPerRU?: number;

@@ -31,6 +31,8 @@ export function toRackConfiguration(rack: RackWithDevices) {
   return {
     id: rack.id,
     name: rack.name,
+    savedByDisplayName: rack.savedByDisplayName ?? undefined,
+    savedByVerified: rack.savedByVerified,
     totalHeight: rack.totalHeightU,
     inchesPerRU: rack.inchesPerRU,
     rackWidthInches: rack.rackWidthInches,
@@ -45,6 +47,8 @@ export function toRackConfiguration(rack: RackWithDevices) {
       heightInU: d.heightInU,
       rackPosition: d.rackPosition ?? undefined,
       physicalHeightInches: d.physicalHeightInches ? Number(d.physicalHeightInches) : undefined,
+      deviceWidthInches: d.deviceWidthInches,
+      horizontalOffsetInches: d.horizontalOffsetInches,
       ports: d.ports
         .slice()
         .sort((a, b) => a.sortOrder - b.sortOrder)
@@ -72,6 +76,8 @@ export type NestedRackDeviceCreate = {
   heightInU: number;
   rackPosition: number | null;
   physicalHeightInches: number | null;
+  deviceWidthInches: number;
+  horizontalOffsetInches: number;
   catalogDeviceId: string | null;
   sortOrder: number;
   ports: { create: Prisma.DevicePortCreateWithoutRackDeviceInput[] };
@@ -95,6 +101,8 @@ export function buildNestedDevices(
     rackPosition: dev.rackPosition ?? null,
     physicalHeightInches:
       dev.physicalHeightInches !== undefined ? dev.physicalHeightInches : null,
+    deviceWidthInches: dev.deviceWidthInches ?? 19,
+    horizontalOffsetInches: dev.horizontalOffsetInches ?? 0,
     catalogDeviceId: catalogIdFromDeviceId(dev.id),
     sortOrder: index,
     ports: {

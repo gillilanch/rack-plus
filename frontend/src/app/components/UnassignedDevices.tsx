@@ -1,6 +1,8 @@
 import { useDrag, useDrop } from 'react-dnd';
 import { RackDevice } from '../types/rack';
 import { getDeviceDisplayName } from '../utils/deviceDisplay';
+import { getDeviceWidthInches, normalizeDeviceHorizontalFields } from '../utils/rackDevicePlacement';
+import { DEFAULT_RACK_WIDTH_INCHES } from '../utils/rackUnits';
 import { GripVertical, Edit, Trash2 } from 'lucide-react';
 
 /** ~7 device rows visible; remainder scrolls inside this panel. */
@@ -8,6 +10,8 @@ const UNASSIGNED_LIST_MAX_HEIGHT = 'min(31.5rem, 56vh)';
 
 interface UnassignedDevicesProps {
   devices: RackDevice[];
+  /** Used so drag payload includes width for horizontal drop placement. */
+  rackWidthInches?: number;
   onEditDevice: (device: RackDevice) => void;
   onRemoveDevice: (deviceId: string) => void;
   /** Drop a device from the rack here to clear its rack position. */
@@ -20,10 +24,20 @@ interface DraggableUnassignedDeviceProps {
   onRemove: (deviceId: string) => void;
 }
 
-function DraggableUnassignedDevice({ device, onEdit, onRemove }: DraggableUnassignedDeviceProps) {
+function DraggableUnassignedDevice({
+  device,
+  rackWidthInches,
+  onEdit,
+  onRemove,
+}: DraggableUnassignedDeviceProps & { rackWidthInches: number }) {
+  const placed = normalizeDeviceHorizontalFields(device, rackWidthInches);
   const [{ isDragging }, drag] = useDrag(() => ({
     type: 'device',
-    item: { id: device.id, heightInU: device.heightInU },
+    item: {
+      id: device.id,
+      heightInU: device.heightInU,
+      deviceWidthInches: getDeviceWidthInches(placed),
+    },
     collect: (monitor) => ({
       isDragging: monitor.isDragging(),
     }),
@@ -89,11 +103,13 @@ function DraggableUnassignedDevice({ device, onEdit, onRemove }: DraggableUnassi
 
 export function UnassignedDevices({
   devices,
+  rackWidthInches = DEFAULT_RACK_WIDTH_INCHES,
   onEditDevice,
   onRemoveDevice,
   onReturnFromRack,
 }: UnassignedDevicesProps) {
   const unassignedDevices = devices.filter((d) => d.rackPosition === undefined);
+  const rw = rackWidthInches > 0 ? rackWidthInches : DEFAULT_RACK_WIDTH_INCHES;
 
   const [{ isOver }, drop] = useDrop(
     () => ({
@@ -145,6 +161,7 @@ export function UnassignedDevices({
           <DraggableUnassignedDevice
             key={device.id}
             device={device}
+            rackWidthInches={rw}
             onEdit={onEditDevice}
             onRemove={onRemoveDevice}
           />

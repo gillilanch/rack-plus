@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { X, Plus, Trash2 } from 'lucide-react';
 import { Device, Port, ConnectorType } from '../data/equipment';
 import { getDeviceDisplayName, inferManufacturerModelFromLegacyName } from '../utils/deviceDisplay';
+import { clampDeviceWidthToRack } from '../utils/rackDevicePlacement';
 
 const connectorTypes: ConnectorType[] = [
   'HDMI',
@@ -58,6 +59,8 @@ export function AddDeviceModal({
   const [model, setModel] = useState('');
   const [category, setCategory] = useState<Device['category']>('Camera');
   const [ports, setPorts] = useState<Port[]>(defaultPorts);
+  const [rackHeightU, setRackHeightU] = useState('1');
+  const [rackWidthIn, setRackWidthIn] = useState('19');
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -76,6 +79,8 @@ export function AddDeviceModal({
       }
       setCategory(editingDevice.category);
       setPorts(clonePorts(editingDevice.ports));
+      setRackHeightU(String(Math.max(1, editingDevice.heightInU ?? 1)));
+      setRackWidthIn(String(editingDevice.deviceWidthInches ?? 19));
       return;
     }
     if (cloneSource) {
@@ -91,6 +96,8 @@ export function AddDeviceModal({
       }
       setCategory(cloneSource.category);
       setPorts(clonePorts(cloneSource.ports));
+      setRackHeightU(String(Math.max(1, cloneSource.heightInU ?? 1)));
+      setRackWidthIn(String(cloneSource.deviceWidthInches ?? 19));
       return;
     }
     if (prefillName?.trim()) {
@@ -99,12 +106,16 @@ export function AddDeviceModal({
       setModel(inf.model);
       setCategory('Interface');
       setPorts([...defaultPorts]);
+      setRackHeightU('1');
+      setRackWidthIn('19');
       return;
     }
     setManufacturer('');
     setModel('');
     setCategory('Camera');
     setPorts([...defaultPorts]);
+    setRackHeightU('1');
+    setRackWidthIn('19');
   }, [isOpen, editingDevice?.id, cloneSource?.id, prefillName]);
 
   if (!isOpen) return null;
@@ -151,6 +162,11 @@ export function AddDeviceModal({
       return;
     }
 
+    const uParsed = parseInt(rackHeightU, 10);
+    const heightInU = Number.isFinite(uParsed) && uParsed >= 1 ? Math.min(100, uParsed) : 1;
+    const wParsed = parseFloat(rackWidthIn);
+    const deviceWidthInches = clampDeviceWidthToRack(Number.isFinite(wParsed) ? wParsed : 19, 120);
+
     if (ports.length === 0) {
       setError('At least one port is required');
       return;
@@ -172,6 +188,8 @@ export function AddDeviceModal({
       model: mdl,
       category,
       ports: filteredPorts,
+      heightInU,
+      deviceWidthInches,
     });
 
     onClose();
@@ -237,6 +255,40 @@ export function AddDeviceModal({
               Saved as: <span className="font-medium text-gray-900">{getDeviceDisplayName({ name: '', manufacturer, model })}</span>
             </p>
           )}
+
+          <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div>
+              <label htmlFor="add-dev-rack-u" className="mb-2 block text-sm font-medium text-gray-700">
+                Rack height (U) *
+              </label>
+              <input
+                id="add-dev-rack-u"
+                type="number"
+                min={1}
+                max={100}
+                value={rackHeightU}
+                onChange={(e) => setRackHeightU(e.target.value)}
+                className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <p className="mt-1 text-xs text-gray-500">Used when you add this model from the catalog to a rack.</p>
+            </div>
+            <div>
+              <label htmlFor="add-dev-rack-w" className="mb-2 block text-sm font-medium text-gray-700">
+                Rack width (inches) *
+              </label>
+              <input
+                id="add-dev-rack-w"
+                type="number"
+                min={0.25}
+                max={120}
+                step={0.25}
+                value={rackWidthIn}
+                onChange={(e) => setRackWidthIn(e.target.value)}
+                className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <p className="mt-1 text-xs text-gray-500">Front-panel width (typical rack gear 19&quot;).</p>
+            </div>
+          </div>
 
           <div className="mb-6">
             <label className="mb-2 block text-sm font-medium text-gray-700">Category *</label>

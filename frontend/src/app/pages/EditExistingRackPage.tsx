@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
-import { Server, ArrowLeft, Search, Clock, ChevronRight, Loader2, Database } from 'lucide-react';
+import { Server, ArrowLeft, Search, Clock, ChevronRight, Loader2, Database, BadgeCheck } from 'lucide-react';
 import { format } from 'date-fns';
 import { listRacks, type RackSummary } from '../api/racks';
 import { DeviceDatabaseModal } from '../components/DeviceDatabaseModal';
@@ -147,10 +147,22 @@ export function EditExistingRackPage() {
                   >
                     <div className="mb-4 flex items-start justify-between">
                       <div className="min-w-0 flex-1">
-                        <h3 className="text-xl font-black text-slate-800 transition-colors group-hover:text-[#CC0000]">
-                          {rack.name}
+                        <h3 className="flex items-center gap-2 text-xl font-black text-slate-800 transition-colors group-hover:text-[#CC0000]">
+                          {rack.savedByVerified && (
+                            <BadgeCheck
+                              className="size-7 shrink-0 text-[#003366]"
+                              aria-label="Verified save"
+                              title="Verified Fox employee save"
+                            />
+                          )}
+                          <span>{rack.name}</span>
                         </h3>
-                        <p className="mt-1 text-sm text-slate-500">Saved on this server</p>
+                        <p className="mt-1 text-sm text-slate-600">
+                          <span className="font-medium text-slate-700">Saved by</span>{' '}
+                          {rack.savedByDisplayName?.trim()
+                            ? rack.savedByDisplayName
+                            : 'Unknown'}
+                        </p>
                       </div>
                       <ChevronRight
                         className={`ml-2 size-7 shrink-0 transition-all ${
@@ -161,15 +173,19 @@ export function EditExistingRackPage() {
                       />
                     </div>
 
-                    <div className="mb-4 grid grid-cols-3 gap-3">
+                    <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
                       <div className="rounded-lg bg-slate-100 px-3 py-2">
                         <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Devices</p>
-                        <p className="text-xl font-black text-slate-800">—</p>
-                        <p className="text-[10px] text-slate-500">open to view</p>
+                        <p className="text-xl font-black text-slate-800">{rack.deviceCount}</p>
+                        <p className="text-[10px] text-slate-500">on rack</p>
                       </div>
                       <div className="rounded-lg bg-slate-100 px-3 py-2">
-                        <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Size</p>
+                        <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Height</p>
                         <p className="text-xl font-black text-slate-800">{rack.totalHeight}U</p>
+                      </div>
+                      <div className="rounded-lg bg-slate-100 px-3 py-2">
+                        <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Width</p>
+                        <p className="text-xl font-black text-slate-800">{rack.rackWidthInches}&quot;</p>
                       </div>
                       <div className="rounded-lg bg-slate-100 px-3 py-2">
                         <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Updated</p>

@@ -11,6 +11,8 @@ import {
   dragLengthToDisplayInches,
 } from '../utils/rackCableMetrics';
 import type { RackConnection, RackDevice } from '../types/rack';
+import { deviceFaceHorizontalSpanPx } from '../utils/rackDevicePlacement';
+import { DEFAULT_RACK_WIDTH_INCHES } from '../utils/rackUnits';
 
 type DeviceEdge = 'left' | 'right';
 
@@ -63,12 +65,25 @@ function bundleSpreadOffset(
   return { ox: (-dy / len) * spread, oy: (dx / len) * spread };
 }
 
+function anchorXForDeviceEdge(
+  device: RackDevice,
+  edge: DeviceEdge,
+  rackWidthPx: number,
+  rackWidthInches: number,
+): number {
+  const { leftPx, widthPx } = deviceFaceHorizontalSpanPx(device, rackWidthPx, rackWidthInches);
+  const w = Math.max(widthPx, DEVICE_EDGE_PAD_PX * 2 + 1);
+  if (edge === 'right') return leftPx + w - DEVICE_EDGE_PAD_PX;
+  return leftPx + DEVICE_EDGE_PAD_PX;
+}
+
 function connectionAnchorPoints(
   from: RackDevice,
   to: RackDevice,
   totalHeight: number,
   unitHeightPx: number,
   rackWidthPx: number,
+  rackWidthInches: number,
   route?: {
     routeFromEdge?: 'left' | 'right';
     routeToEdge?: 'left' | 'right';
@@ -80,8 +95,8 @@ function connectionAnchorPoints(
   const toEdge = route?.routeToEdge ?? 'left';
   const fr = route?.routeFromYRatio ?? 0.5;
   const tr = route?.routeToYRatio ?? 0.5;
-  const x1 = anchorXForEdge(fromEdge, rackWidthPx);
-  const x2 = anchorXForEdge(toEdge, rackWidthPx);
+  const x1 = anchorXForDeviceEdge(from, fromEdge, rackWidthPx, rackWidthInches);
+  const x2 = anchorXForDeviceEdge(to, toEdge, rackWidthPx, rackWidthInches);
   const b1 = deviceRowBounds(from, totalHeight, unitHeightPx);
   const b2 = deviceRowBounds(to, totalHeight, unitHeightPx);
   const h1 = Math.max(b1.height, 1);
@@ -158,7 +173,7 @@ function inferToEdgeFromDrag(d: DragState, rackWidthPx: number): DeviceEdge {
     if (right(d.startX) && right(d.curX)) return 'right';
   }
 
-  return inferToEdgeFromRackX(d.curX);
+  return inferToEdgeFromRackX(d.curX, rackWidthPx);
 }
 
 function portSocketCircle(cx: number, cy: number, edge: DeviceEdge) {
@@ -283,16 +298,13 @@ function resolveDropTargetDevice(
   return best;
 }
 
-function anchorXForEdge(edge: DeviceEdge, rackWidthPx: number): number {
-  return edge === 'right' ? rackWidthPx - DEVICE_EDGE_PAD_PX : DEVICE_EDGE_PAD_PX;
-}
-
 interface RackCableOverlayProps {
   totalHeight: number;
   placedDevices: RackDevice[];
   unitHeightPx: number;
   rackWidthPx: number;
   rackHeightPx: number;
+  rackWidthInches?: number;
   connections: RackConnection[];
   inchesPerRU: number;
   slackAllowanceFeet: number;
@@ -307,6 +319,7 @@ export function RackCableOverlay({
   unitHeightPx,
   rackWidthPx,
   rackHeightPx,
+  rackWidthInches = DEFAULT_RACK_WIDTH_INCHES,
   connections,
   inchesPerRU,
   slackAllowanceFeet,
@@ -559,7 +572,7 @@ export function RackCableOverlay({
     const { top, height } = deviceRowBounds(d, totalHeight, unitHeightPx);
     const yRel = clientY - r.top;
     const yClamped = Math.min(Math.max(yRel, top + 2), top + height - 2);
-    const xAnchor = anchorXForEdge(edge, rackWidthPx);
+    const xAnchor = anchorXForDeviceEdge(d, edge, rackWidthPx, rackWidthInches);
     const xRel = clientX - r.left;
     const yStart = Number.isFinite(yClamped) ? yClamped : deviceCenterY(d, totalHeight, unitHeightPx);
     setDrag({
@@ -591,7 +604,7 @@ export function RackCableOverlay({
           const a = byId.get(c.fromDeviceId);
           const b = byId.get(c.toDeviceId);
           if (!a?.rackPosition || !b?.rackPosition) return null;
-          const base = connectionAnchorPoints(a, b, totalHeight, unitHeightPx, rackWidthPx, c);
+          const base = connectionAnchorPoints(a, b, totalHeight, unitHeightPx, rackWidthPx, rackWidthInches, c);
           let { x1, y1, x2, y2 } = base;
           const spread = cableBundleSpreadY.get(c.id) ?? 0;
           if (spread !== 0) {
@@ -685,6 +698,8 @@ export function RackCableOverlay({
         if (d.rackPosition === undefined) return null;
         const { top, height } = deviceRowBounds(d, totalHeight, unitHeightPx);
         const rowH = Math.max(height, 8);
+        const { leftPx, widthPx } = deviceFaceHorizontalSpanPx(d, rackWidthPx, rackWidthInches);
+        const faceW = Math.max(widthPx, EDGE_STRIP_PX * 2 + 2);
         const stripClass =
           'pointer-events-auto absolute touch-none cursor-crosshair select-none bg-transparent hover:bg-blue-500/15 active:bg-blue-500/25';
         return (
@@ -694,7 +709,7 @@ export function RackCableOverlay({
               title="Drag cable from left edge — release where the cable tip points; left/right strips on the target pick that side"
               className={stripClass}
               data-rack-device-id={d.id}
-              style={{ left: 0, top, width: EDGE_STRIP_PX, height: rowH }}
+              style={{ left: leftPx, top, width: EDGE_STRIP_PX, height: rowH }}
               onPointerDown={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
@@ -720,7 +735,7 @@ export function RackCableOverlay({
               title="Drag cable from right edge — release where the cable tip points; left/right strips on the target pick that side"
               className={stripClass}
               data-rack-device-id={d.id}
-              style={{ left: rackWidthPx - EDGE_STRIP_PX, top, width: EDGE_STRIP_PX, height: rowH }}
+              style={{ left: leftPx + faceW - EDGE_STRIP_PX, top, width: EDGE_STRIP_PX, height: rowH }}
               onPointerDown={(e) => {
                 e.preventDefault();
                 e.stopPropagation();

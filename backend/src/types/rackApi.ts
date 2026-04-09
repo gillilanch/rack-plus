@@ -37,6 +37,8 @@ export const rackDeviceSchema = z
     heightInU: z.number().int().positive(),
     rackPosition: z.number().int().min(0).optional(),
     physicalHeightInches: z.number().optional(),
+    deviceWidthInches: z.number().positive().max(120).optional(),
+    horizontalOffsetInches: z.number().min(0).max(120).optional(),
     ports: z.array(portSchema),
   })
   .superRefine((val, ctx) => {
@@ -53,6 +55,13 @@ export const rackDeviceSchema = z
 
 const inchesPerRUSchema = z.number().positive().max(48);
 
+const attributionSchema = z.object({
+  /** When true, saved as uncertified Guest (ignores savedByNameRaw). */
+  saveAsGuest: z.boolean().optional().default(false),
+  /** Fox employee name as typed or chosen from autocomplete; verified server-side against directory. */
+  savedByNameRaw: z.string().optional().nullable(),
+});
+
 /** Body for POST /api/racks (no rack id yet). */
 export const createRackBodySchema = z.object({
   name: z.string().min(1),
@@ -62,6 +71,7 @@ export const createRackBodySchema = z.object({
   slackAllowance: z.number(),
   devices: z.array(rackDeviceSchema),
   connections: z.array(rackConnectionSchema),
+  ...attributionSchema.shape,
 });
 
 /** Body for PUT /api/racks/:id */
@@ -73,6 +83,7 @@ export const updateRackBodySchema = z.object({
   slackAllowance: z.number(),
   devices: z.array(rackDeviceSchema),
   connections: z.array(rackConnectionSchema),
+  ...attributionSchema.shape,
 });
 
 export type CreateRackBody = z.infer<typeof createRackBodySchema>;

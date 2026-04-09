@@ -174,7 +174,11 @@ api.get('/racks', async (_req, res, next) => {
         id: r.id,
         name: r.name,
         totalHeight: r.totalHeightU,
+        rackWidthInches: r.rackWidthInches,
+        deviceCount: r._count.devices,
         updatedAt: r.updatedAt.toISOString(),
+        savedByDisplayName: r.savedByDisplayName,
+        savedByVerified: r.savedByVerified,
       })),
     );
   } catch (e) {

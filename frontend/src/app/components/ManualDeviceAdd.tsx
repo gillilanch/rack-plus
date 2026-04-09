@@ -10,6 +10,7 @@ import {
   mergeBuiltInAndCustomDevices,
   searchDevicesByName,
 } from '../utils/deviceCatalogSearch';
+import { clampDeviceWidthToRack } from '../utils/rackDevicePlacement';
 
 /** Local name for the saved custom device list (browser storage). */
 const FOX_EQUIPMENT_DATABASE_LABEL = 'Fox equipment database';
@@ -22,6 +23,7 @@ interface ManualDeviceAddProps {
     category: string;
     heightInU: number;
     heightInches?: number;
+    deviceWidthInches?: number;
     ports?: Port[];
   }) => void;
   /** Matches Cable Identification System palette when set to cable. */
@@ -44,6 +46,7 @@ export function ManualDeviceAdd({ onAddDevice, uiVariant = 'default' }: ManualDe
   const [category, setCategory] = useState('Interface');
   const [heightValue, setHeightValue] = useState('1');
   const [heightUnit, setHeightUnit] = useState<'U' | 'inches'>('U');
+  const [rackWidthInches, setRackWidthInches] = useState('19');
   const [devicePool, setDevicePool] = useState<Device[]>(() => mergeBuiltInAndCustomDevices());
   const [suggestionsOpen, setSuggestionsOpen] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
@@ -129,13 +132,17 @@ export function ManualDeviceAdd({ onAddDevice, uiVariant = 'default' }: ManualDe
       if (!mfr || !mdl) return;
 
       const displayName = getDeviceDisplayName({ name: '', manufacturer: mfr, model: mdl });
-      const { heightInU, heightInches } = computeHeights();
+      const { heightInU: formHeightU, heightInches } = computeHeights();
+      const faceW = clampDeviceWidthToRack(parseFloat(rackWidthInches) || 19, 120);
       const exact = findExactDeviceByName(displayName, devicePool);
       const match =
         chosenCatalogDevice &&
         deviceIdentityLabel(chosenCatalogDevice).trim().toLowerCase() === displayName.trim().toLowerCase()
           ? chosenCatalogDevice
           : exact;
+
+      const heightInU = match?.heightInU ?? formHeightU;
+      const widthIn = match?.deviceWidthInches ?? faceW;
 
       if (saveToFoxDb && !findExactDeviceByName(displayName, devicePool)) {
         saveCustomDevice({
@@ -145,6 +152,8 @@ export function ManualDeviceAdd({ onAddDevice, uiVariant = 'default' }: ManualDe
           model: mdl,
           category: manualCategoryToDeviceCategory(category),
           ports: [],
+          heightInU,
+          deviceWidthInches: widthIn,
         });
         refreshPool();
       }
@@ -155,7 +164,8 @@ export function ManualDeviceAdd({ onAddDevice, uiVariant = 'default' }: ManualDe
         name: displayName,
         category: match ? deviceCategoryToManualLabel(match.category) : category,
         heightInU,
-        heightInches,
+        heightInches: match?.heightInU != null ? undefined : heightInches,
+        deviceWidthInches: widthIn,
         ports: match && match.ports.length > 0 ? match.ports : undefined,
       });
 
@@ -164,12 +174,24 @@ export function ManualDeviceAdd({ onAddDevice, uiVariant = 'default' }: ManualDe
       setCategory('Interface');
       setHeightValue('1');
       setHeightUnit('U');
+      setRackWidthInches('19');
       setChosenCatalogDevice(null);
       setShowFoxPrompt(false);
       setSuggestionsOpen(false);
       setIsOpen(false);
     },
-    [manufacturer, model, category, heightValue, heightUnit, devicePool, chosenCatalogDevice, onAddDevice, refreshPool],
+    [
+      manufacturer,
+      model,
+      category,
+      heightValue,
+      heightUnit,
+      rackWidthInches,
+      devicePool,
+      chosenCatalogDevice,
+      onAddDevice,
+      refreshPool,
+    ],
   );
 
   const trySubmit = (e: React.FormEvent) => {
@@ -207,6 +229,13 @@ export function ManualDeviceAdd({ onAddDevice, uiVariant = 'default' }: ManualDe
     }
     setCategory(deviceCategoryToManualLabel(d.category));
     setChosenCatalogDevice(d);
+    if (d.heightInU != null && d.heightInU >= 1) {
+      setHeightValue(String(d.heightInU));
+      setHeightUnit('U');
+    }
+    if (d.deviceWidthInches != null && d.deviceWidthInches > 0) {
+      setRackWidthInches(String(d.deviceWidthInches));
+    }
     setSuggestionsOpen(false);
     manufacturerRef.current?.focus();
   };
@@ -237,6 +266,7 @@ export function ManualDeviceAdd({ onAddDevice, uiVariant = 'default' }: ManualDe
     setCategory('Interface');
     setHeightValue('1');
     setHeightUnit('U');
+    setRackWidthInches('19');
   };
 
   if (!isOpen) {
@@ -408,6 +438,27 @@ export function ManualDeviceAdd({ onAddDevice, uiVariant = 'default' }: ManualDe
           {heightUnit === 'inches' && (
             <p className="mt-1 text-xs text-gray-500">≈ {Math.ceil(parseFloat(heightValue || '0') / 1.75)}U</p>
           )}
+        </div>
+
+        <div>
+          <label htmlFor="manual-rack-width" className="mb-1 block text-sm font-medium text-gray-700">
+            Rack width (inches)
+          </label>
+          <input
+            id="manual-rack-width"
+            type="number"
+            min={0.25}
+            max={120}
+            step={0.25}
+            value={rackWidthInches}
+            onChange={(e) => setRackWidthInches(e.target.value)}
+            className={`w-full rounded-lg border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 ${
+              cable ? 'focus:ring-[#003366]' : 'focus:ring-blue-500'
+            }`}
+          />
+          <p className="mt-1 text-xs text-gray-500">
+            Saved with the device when you add to {FOX_EQUIPMENT_DATABASE_LABEL}; used when placing on the rack.
+          </p>
         </div>
 
         {showFoxPrompt && (

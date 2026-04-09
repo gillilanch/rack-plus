@@ -3,7 +3,12 @@ import { X, Plus, Trash2 } from 'lucide-react';
 import type { RackDevice } from '../types/rack';
 import { getDeviceDisplayName } from '../utils/deviceDisplay';
 import type { ConnectorType, Port } from '../data/equipment';
-import { DEFAULT_INCHES_PER_RU, inchesFromRU, ruFromInches } from '../utils/rackUnits';
+import { DEFAULT_INCHES_PER_RU, DEFAULT_RACK_WIDTH_INCHES, inchesFromRU, ruFromInches } from '../utils/rackUnits';
+import {
+  clampDeviceWidthToRack,
+  clampHorizontalOffset,
+  DEFAULT_DEVICE_WIDTH_INCHES,
+} from '../utils/rackDevicePlacement';
 
 const connectorTypes: ConnectorType[] = [
   'HDMI',
@@ -55,11 +60,13 @@ function DevicePortSection({
   editedDevice,
   setEditedDevice,
   inchesPerRU,
+  rackWidthInches,
 }: {
   title: string;
   editedDevice: RackDevice;
   setEditedDevice: (d: RackDevice) => void;
   inchesPerRU: number;
+  rackWidthInches: number;
 }) {
   const handleAddPort = () => {
     setEditedDevice({
@@ -151,6 +158,53 @@ function DevicePortSection({
               className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
             />
           </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-gray-600">Device width (inches)</label>
+            <input
+              type="number"
+              min={0.25}
+              max={rackWidthInches}
+              step={0.25}
+              value={editedDevice.deviceWidthInches ?? DEFAULT_DEVICE_WIDTH_INCHES}
+              onChange={(e) => {
+                const n = parseFloat(e.target.value);
+                const width = Number.isFinite(n) ? clampDeviceWidthToRack(n, rackWidthInches) : DEFAULT_DEVICE_WIDTH_INCHES;
+                setEditedDevice({
+                  ...editedDevice,
+                  deviceWidthInches: width,
+                  horizontalOffsetInches: clampHorizontalOffset(
+                    editedDevice.horizontalOffsetInches ?? 0,
+                    width,
+                    rackWidthInches,
+                  ),
+                });
+              }}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-gray-600">Offset from left (inches)</label>
+            <input
+              type="number"
+              min={0}
+              max={Math.max(
+                0,
+                rackWidthInches - (editedDevice.deviceWidthInches ?? DEFAULT_DEVICE_WIDTH_INCHES),
+              )}
+              step={0.25}
+              value={editedDevice.horizontalOffsetInches ?? 0}
+              onChange={(e) => {
+                const n = parseFloat(e.target.value);
+                const width = clampDeviceWidthToRack(
+                  editedDevice.deviceWidthInches ?? DEFAULT_DEVICE_WIDTH_INCHES,
+                  rackWidthInches,
+                );
+                const off = Number.isFinite(n) ? clampHorizontalOffset(n, width, rackWidthInches) : 0;
+                setEditedDevice({ ...editedDevice, horizontalOffsetInches: off, deviceWidthInches: width });
+              }}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            />
+          </div>
         </div>
       </div>
 
@@ -226,6 +280,7 @@ interface RackDualDeviceEditorProps {
   onClose: () => void;
   onSave: (a: RackDevice, b: RackDevice) => void;
   inchesPerRU?: number;
+  rackWidthInches?: number;
 }
 
 export function RackDualDeviceEditor({
@@ -235,11 +290,16 @@ export function RackDualDeviceEditor({
   onClose,
   onSave,
   inchesPerRU: inchesPerRUProp,
+  rackWidthInches: rackWidthProp,
 }: RackDualDeviceEditorProps) {
   const inchesPerRU =
     inchesPerRUProp != null && Number.isFinite(inchesPerRUProp) && inchesPerRUProp > 0
       ? inchesPerRUProp
       : DEFAULT_INCHES_PER_RU;
+  const rackWidthInches =
+    rackWidthProp != null && Number.isFinite(rackWidthProp) && rackWidthProp > 0
+      ? rackWidthProp
+      : DEFAULT_RACK_WIDTH_INCHES;
   const [a, setA] = useState<RackDevice>(deviceA);
   const [b, setB] = useState<RackDevice>(deviceB);
   const [tab, setTab] = useState<'a' | 'b'>('a');
@@ -290,9 +350,21 @@ export function RackDualDeviceEditor({
 
         <div className="p-6">
           {tab === 'a' ? (
-            <DevicePortSection title="Device A" editedDevice={a} setEditedDevice={setA} inchesPerRU={inchesPerRU} />
+            <DevicePortSection
+              title="Device A"
+              editedDevice={a}
+              setEditedDevice={setA}
+              inchesPerRU={inchesPerRU}
+              rackWidthInches={rackWidthInches}
+            />
           ) : (
-            <DevicePortSection title="Device B" editedDevice={b} setEditedDevice={setB} inchesPerRU={inchesPerRU} />
+            <DevicePortSection
+              title="Device B"
+              editedDevice={b}
+              setEditedDevice={setB}
+              inchesPerRU={inchesPerRU}
+              rackWidthInches={rackWidthInches}
+            />
           )}
         </div>
 

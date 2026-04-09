@@ -1,7 +1,25 @@
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../db/client';
+import { resolveAttribution } from '../data/foxEmployees';
 import { buildNestedDevices, toRackConfiguration, type RackWithDevices } from '../mappers/rack';
 import type { CreateRackBody, UpdateRackBody } from '../types/rackApi';
+
+function attributionFromBody(body: CreateRackBody | UpdateRackBody) {
+  return resolveAttribution({
+    saveAsGuest: body.saveAsGuest ?? false,
+    savedByNameRaw: body.savedByNameRaw,
+  });
+}
+
+export async function findRackNameConflict(name: string, excludeId?: string) {
+  const key = name.trim().toLowerCase();
+  if (!key) return null;
+  const rows = await prisma.rack.findMany({
+    where: excludeId ? { NOT: { id: excludeId } } : undefined,
+    select: { id: true, name: true },
+  });
+  return rows.find((r) => r.name.trim().toLowerCase() === key) ?? null;
+}
 
 const rackInclude = {
   devices: {
@@ -16,7 +34,11 @@ export async function listRacks() {
       id: true,
       name: true,
       totalHeightU: true,
+      rackWidthInches: true,
       updatedAt: true,
+      savedByDisplayName: true,
+      savedByVerified: true,
+      _count: { select: { devices: true } },
     },
   });
 }
@@ -32,9 +54,12 @@ export async function getRackById(id: string) {
 
 export async function createRack(body: CreateRackBody) {
   const nested = buildNestedDevices(body.devices);
+  const attr = attributionFromBody(body);
   const rack = await prisma.rack.create({
     data: {
-      name: body.name,
+      name: body.name.trim(),
+      savedByDisplayName: attr.displayName,
+      savedByVerified: attr.verified,
       totalHeightU: body.totalHeight,
       inchesPerRU: body.inchesPerRU,
       rackWidthInches: body.rackWidthInches,
@@ -64,11 +89,14 @@ export async function deleteAllRacks(): Promise<{ count: number }> {
 }
 
 export async function upsertRackFull(id: string, body: UpdateRackBody) {
+  const attr = attributionFromBody(body);
   await prisma.$transaction(async (tx) => {
     await tx.rack.update({
       where: { id },
       data: {
-        name: body.name,
+        name: body.name.trim(),
+        savedByDisplayName: attr.displayName,
+        savedByVerified: attr.verified,
         totalHeightU: body.totalHeight,
         inchesPerRU: body.inchesPerRU,
         rackWidthInches: body.rackWidthInches,

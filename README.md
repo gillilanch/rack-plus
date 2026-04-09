@@ -4,7 +4,16 @@ Rack configure. Connect.
 
 ## How to run the app
 
-**Before anything else:** copy [`backend/.env.example`](backend/.env.example) to `backend/.env` and set `DATABASE_URL` (local Postgres or Docker, depending on how you run Postgres).
+**Environment files (pick one machine / mode):**
+
+| Where | Copy this → `backend/.env` | Frontend dev only |
+|-------|----------------------------|-------------------|
+| **Fox Mac Studio** (production LAN URL) | [`backend/.env.macstudio.example`](backend/.env.macstudio.example) | not used (built SPA) |
+| **Your laptop** (two terminals, `npm run dev`) | [`backend/.env.development.example`](backend/.env.development.example) | [`frontend/.env.development.example`](frontend/.env.development.example) → `frontend/.env.development` |
+
+Staff URLs on the Mac Studio (with `PORT=4000`): `http://Foxs-Mac-Studio.local:4000` or `http://10.231.208.225:4000`. Change `PORT` in `backend/.env` if you use another port; for laptop dev, set the same value in `VITE_DEV_API_PORT` inside `frontend/.env.development`.
+
+Or start from the generic [`backend/.env.example`](backend/.env.example) and edit by hand.
 
 ---
 
@@ -12,13 +21,20 @@ Rack configure. Connect.
 
 You need **two terminals** and **Postgres** running.
 
-1. Start Postgres (from the **repo root**):
+1. **First time on laptop:**  
+   `cp backend/.env.development.example backend/.env` and  
+   `cp frontend/.env.development.example frontend/.env.development`  
+   Edit `DATABASE_URL` / `YOUR_USERNAME`. If `PORT` in `backend/.env` is not `4000`, set the same value as `VITE_DEV_API_PORT` in `frontend/.env.development`.
+
+2. Start Postgres (from the **repo root**), e.g. Docker:
 
    ```bash
    docker compose up -d
    ```
 
-2. **Terminal 1 — backend** (folder `backend/`):
+   Or use Homebrew Postgres (no Docker) and match `DATABASE_URL`.
+
+3. **Terminal 1 — backend** (folder `backend/`):
 
    ```bash
    npm ci
@@ -26,14 +42,14 @@ You need **two terminals** and **Postgres** running.
    npm run dev
    ```
 
-3. **Terminal 2 — frontend** (folder `frontend/`):
+4. **Terminal 2 — frontend** (folder `frontend/`):
 
    ```bash
    npm ci
    npm run dev
    ```
 
-4. Open the app in your browser at the URL **Vite prints** (usually **http://localhost:5173**).
+5. Open the app at the URL **Vite prints** (usually **http://localhost:5173**).
 
 ---
 

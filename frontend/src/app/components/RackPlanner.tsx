@@ -29,10 +29,19 @@ import { RackPlannerWorkArea } from './RackPlannerWorkArea';
 import { RackDeviceEditor } from './RackDeviceEditor';
 import { RackDualDeviceEditor } from './RackDualDeviceEditor';
 import { CurrentRacksModal } from './CurrentRacksModal';
-import { SaveRackModal } from './SaveRackModal';
+import { SaveRackModal, type SaveRackMode } from './SaveRackModal';
+import type { RackSaveAttribution } from '../api/racks';
 import { AlertTriangle, CloudOff, ImageDown, Loader2, Printer, Save, Settings } from 'lucide-react';
-
-
+import { toast } from 'sonner';
+import {
+  clampDeviceWidthToRack,
+  clampHorizontalOffset,
+  getDeviceWidthInches,
+  getHorizontalOffsetInches,
+  normalizeDeviceHorizontalFields,
+  validateAllPlacedDevices,
+  validateSideBySidePlacement,
+} from '../utils/rackDevicePlacement';
 
 /** Session-only: each browser tab/session starts fresh; explicit save still persists to the server. */
 const RACK_SESSION_KEY = 'rackPlanner.rackId';
@@ -386,19 +395,37 @@ export function RackPlanner({
 
   const handleDualSave = useCallback(
     (a: RackDevice, b: RackDevice) => {
+      const rw = rackWidthInches > 0 ? rackWidthInches : DEFAULT_RACK_WIDTH_INCHES;
+      const na = normalizeDeviceHorizontalFields(a, rw);
+      const nb = normalizeDeviceHorizontalFields(b, rw);
+      let applied = false;
+      let placementError: string | null = null;
+      setDevices((prev) => {
+        const next = prev.map((d) => (d.id === na.id ? na : d.id === nb.id ? nb : d));
+        const v = validateAllPlacedDevices(next, rw);
+        if (!v.ok) {
+          placementError = v.message;
+          return prev;
+        }
+        applied = true;
+        return next;
+      });
+      if (!applied) {
+        toast.error(placementError ?? 'Cannot save — check device widths on shared rack units.');
+        return;
+      }
       const pend = pendingCableRef.current;
       pendingCableRef.current = null;
       setDualDevices(null);
-      setDevices((prev) => prev.map((d) => (d.id === a.id ? a : d.id === b.id ? b : d)));
       markRackDirty();
       if (pend) {
-        const from = pend.fromId === a.id ? a : b;
-        const to = pend.toId === a.id ? a : b;
+        const from = pend.fromId === na.id ? na : nb;
+        const to = pend.toId === na.id ? na : nb;
         setConnections((cprev) => {
           const m = findFirstUnusedMatchingPortPair(from, to, cprev);
           if (!m) return cprev;
-          const devFrom = m.fromDeviceId === a.id ? a : b;
-          const devTo = m.toDeviceId === a.id ? a : b;
+          const devFrom = m.fromDeviceId === na.id ? na : nb;
+          const devTo = m.toDeviceId === na.id ? na : nb;
           return [
             ...cprev,
             connectionFromManualPorts(
@@ -414,7 +441,7 @@ export function RackPlanner({
         });
       }
     },
-    [inchesPerRU, slackAllowance, markRackDirty],
+    [inchesPerRU, slackAllowance, markRackDirty, rackWidthInches],
   );
 
   const handleDualClose = useCallback(() => {
@@ -463,15 +490,19 @@ export function RackPlanner({
           }
         } else if (forceNewRack) {
           sessionStorage.removeItem(RACK_SESSION_KEY);
-          config = await createRack({
-            name: 'New rack',
-            totalHeight: 42,
-            inchesPerRU: DEFAULT_INCHES_PER_RU,
-            rackWidthInches: DEFAULT_RACK_WIDTH_INCHES,
-            slackAllowance: 0,
-            devices: [],
-            connections: [],
-          });
+          if (cancelled) return;
+          setRackId(null);
+          setRackName('New rack');
+          setTotalHeight(42);
+          setInchesPerRU(DEFAULT_INCHES_PER_RU);
+          setRackWidthInches(DEFAULT_RACK_WIDTH_INCHES);
+          setSlackAllowance(0);
+          setConnections([]);
+          setDevices([]);
+          setCsvUnmatchedQueue([]);
+          setRackDirty(false);
+          setLoadState('ready');
+          return;
         } else {
           const stored = sessionStorage.getItem(RACK_SESSION_KEY);
           if (stored) {
@@ -482,20 +513,48 @@ export function RackPlanner({
             }
           }
           if (!config) {
-            config = await createRack({
-              name: 'New rack',
-              totalHeight: 42,
-              inchesPerRU: DEFAULT_INCHES_PER_RU,
-              rackWidthInches: DEFAULT_RACK_WIDTH_INCHES,
-              slackAllowance: 0,
-              devices: [],
-              connections: [],
-            });
+            const bootstrapAttribution: RackSaveAttribution = {
+              saveAsGuest: true,
+              savedByNameRaw: '',
+            };
+            const draftName = `New rack (${crypto.randomUUID().slice(0, 8)})`;
+            try {
+              config = await createRack(
+                {
+                  name: draftName,
+                  totalHeight: 42,
+                  inchesPerRU: DEFAULT_INCHES_PER_RU,
+                  rackWidthInches: DEFAULT_RACK_WIDTH_INCHES,
+                  slackAllowance: 0,
+                  devices: [],
+                  connections: [],
+                },
+                bootstrapAttribution,
+              );
+            } catch (e) {
+              const err = e as Error & { status?: number };
+              if (err.status === 409) {
+                config = await createRack(
+                  {
+                    name: `New rack (${crypto.randomUUID().slice(0, 8)})`,
+                    totalHeight: 42,
+                    inchesPerRU: DEFAULT_INCHES_PER_RU,
+                    rackWidthInches: DEFAULT_RACK_WIDTH_INCHES,
+                    slackAllowance: 0,
+                    devices: [],
+                    connections: [],
+                  },
+                  bootstrapAttribution,
+                );
+              } else {
+                throw e;
+              }
+            }
           }
         }
 
         if (cancelled) return;
-        sessionStorage.setItem(RACK_SESSION_KEY, config.id);
+        sessionStorage.setItem(RACK_SESSION_KEY, config!.id);
         if (initialRackIdToLoad) {
           setCsvUnmatchedQueue([]);
         }
@@ -525,11 +584,9 @@ export function RackPlanner({
     [hydrateSetters],
   );
 
-  const handleSaveRackUpdateCurrent = useCallback(
-    async (name: string) => {
-      if (!rackId) throw new Error('No rack loaded');
-      const config: RackConfiguration = {
-        id: rackId,
+  const handleSaveRack = useCallback(
+    async (mode: SaveRackMode, name: string, attribution: RackSaveAttribution) => {
+      const payload = {
         name,
         totalHeight,
         inchesPerRU,
@@ -538,40 +595,25 @@ export function RackPlanner({
         devices,
         connections,
       };
-      const updated = await saveRack(config);
+      if (mode === 'create' || mode === 'new') {
+        const created = await createRack(payload, attribution);
+        sessionStorage.setItem(RACK_SESSION_KEY, created.id);
+        hydrateFromConfig(created, hydrateSetters);
+        completeSaveLifecycle();
+        return;
+      }
+      if (!rackId) throw new Error('No rack loaded');
+      const config: RackConfiguration = {
+        id: rackId,
+        ...payload,
+      };
+      const updated = await saveRack(config, attribution);
       sessionStorage.setItem(RACK_SESSION_KEY, updated.id);
       hydrateFromConfig(updated, hydrateSetters);
       completeSaveLifecycle();
     },
     [
       rackId,
-      totalHeight,
-      inchesPerRU,
-      rackWidthInches,
-      slackAllowance,
-      devices,
-      connections,
-      hydrateSetters,
-      completeSaveLifecycle,
-    ],
-  );
-
-  const handleSaveRackAsNew = useCallback(
-    async (name: string) => {
-      const created = await createRack({
-        name,
-        totalHeight,
-        inchesPerRU,
-        rackWidthInches,
-        slackAllowance,
-        devices,
-        connections,
-      });
-      sessionStorage.setItem(RACK_SESSION_KEY, created.id);
-      hydrateFromConfig(created, hydrateSetters);
-      completeSaveLifecycle();
-    },
-    [
       totalHeight,
       inchesPerRU,
       rackWidthInches,
@@ -615,7 +657,9 @@ export function RackPlanner({
   const handleReturnFromRack = useCallback(
     (deviceId: string) => {
       setDevices((prev) =>
-        prev.map((d) => (d.id === deviceId ? { ...d, rackPosition: undefined } : d)),
+        prev.map((d) =>
+          d.id === deviceId ? { ...d, rackPosition: undefined, horizontalOffsetInches: undefined } : d,
+        ),
       );
       setConnections((c) => c.filter((x) => x.fromDeviceId !== deviceId && x.toDeviceId !== deviceId));
       markRackDirty();
@@ -708,20 +752,25 @@ export function RackPlanner({
       closeCsvAddModal();
       if (!item) return;
       removeCsvQueueItem(item.id);
+      const rw = rackWidthInches > 0 ? rackWidthInches : DEFAULT_RACK_WIDTH_INCHES;
+      const heightInU = device.heightInU ?? item.heightInU;
+      const deviceWidthInches =
+        device.deviceWidthInches != null ? clampDeviceWidthToRack(device.deviceWidthInches, rw) : undefined;
       const rack: RackDevice = normalizeRackDeviceIdentity({
         id: `imported-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
         name: device.name,
         manufacturer: device.manufacturer,
         model: device.model,
         category: deviceCategoryToManualLabel(device.category) as RackDevice['category'],
-        heightInU: item.heightInU,
+        heightInU,
         physicalHeightInches: item.physicalHeightInches,
+        deviceWidthInches,
         ports: device.ports?.length ? device.ports : [],
       }) as RackDevice;
       setDevices((prev) => [...prev, rack]);
       markRackDirty();
     },
-    [csvAddTargetId, csvUnmatchedQueue, closeCsvAddModal, removeCsvQueueItem, markRackDirty],
+    [csvAddTargetId, csvUnmatchedQueue, closeCsvAddModal, removeCsvQueueItem, markRackDirty, rackWidthInches],
   );
 
   const existingNamesForCsvAdd = useMemo(() => {
@@ -737,8 +786,14 @@ export function RackPlanner({
     category: string;
     heightInU: number;
     heightInches?: number;
+    deviceWidthInches?: number;
     ports?: RackDevice['ports'];
   }) => {
+    const rw = rackWidthInches > 0 ? rackWidthInches : DEFAULT_RACK_WIDTH_INCHES;
+    const deviceWidthInches =
+      deviceData.deviceWidthInches != null
+        ? clampDeviceWidthToRack(deviceData.deviceWidthInches, rw)
+        : undefined;
     const newDevice: RackDevice = normalizeRackDeviceIdentity({
       id: `manual-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
       name: deviceData.name,
@@ -747,18 +802,48 @@ export function RackPlanner({
       category: deviceData.category as RackDevice['category'],
       heightInU: deviceData.heightInU,
       physicalHeightInches: deviceData.heightInches,
+      deviceWidthInches,
       ports: deviceData.ports?.length ? deviceData.ports : [],
     }) as RackDevice;
     setDevices((prev) => [...prev, newDevice]);
     markRackDirty();
   };
 
-  const handleUpdateDevicePosition = (deviceId: string, position: number) => {
-    setDevices((prev) =>
-      prev.map((d) => (d.id === deviceId ? { ...d, rackPosition: position } : d)),
-    );
-    markRackDirty();
-  };
+  const handleUpdateDevicePosition = useCallback(
+    (deviceId: string, position: number, horizontalOffsetInches?: number) => {
+      const rw = rackWidthInches > 0 ? rackWidthInches : DEFAULT_RACK_WIDTH_INCHES;
+      let applied = false;
+      let placementError: string | null = null;
+      setDevices((prev) => {
+        const dev = prev.find((d) => d.id === deviceId);
+        if (!dev) return prev;
+        const w = getDeviceWidthInches(dev);
+        const off =
+          horizontalOffsetInches !== undefined
+            ? horizontalOffsetInches
+            : getHorizontalOffsetInches(dev);
+        const candidate = normalizeDeviceHorizontalFields(
+          {
+            ...dev,
+            rackPosition: position,
+            horizontalOffsetInches: clampHorizontalOffset(off, w, rw),
+          },
+          rw,
+        );
+        const others = prev.filter((d) => d.id !== deviceId && d.rackPosition !== undefined);
+        const v = validateSideBySidePlacement(candidate, others, rw);
+        if (!v.ok) {
+          placementError = v.message;
+          return prev;
+        }
+        applied = true;
+        return prev.map((d) => (d.id === deviceId ? candidate : d));
+      });
+      if (!applied) toast.error(placementError ?? 'Cannot place — combined width on this U exceeds rack width.');
+      else markRackDirty();
+    },
+    [rackWidthInches, markRackDirty],
+  );
 
   const handleRemoveDevice = (deviceId: string) => {
     setDevices((prev) => prev.filter((d) => d.id !== deviceId));
@@ -766,10 +851,31 @@ export function RackPlanner({
     markRackDirty();
   };
 
-  const handleSaveDevice = (updatedDevice: RackDevice) => {
-    setDevices((prev) => prev.map((d) => (d.id === updatedDevice.id ? updatedDevice : d)));
-    markRackDirty();
-  };
+  const handleSaveDevice = useCallback(
+    (updatedDevice: RackDevice): boolean => {
+      const rw = rackWidthInches > 0 ? rackWidthInches : DEFAULT_RACK_WIDTH_INCHES;
+      const normalized = normalizeDeviceHorizontalFields(updatedDevice, rw);
+      let applied = false;
+      let placementError: string | null = null;
+      setDevices((prev) => {
+        const next = prev.map((d) => (d.id === normalized.id ? normalized : d));
+        const v = validateAllPlacedDevices(next, rw);
+        if (!v.ok) {
+          placementError = v.message;
+          return prev;
+        }
+        applied = true;
+        return next;
+      });
+      if (!applied) {
+        toast.error(placementError ?? 'Cannot save — combined width on a shared U exceeds rack width.');
+        return false;
+      }
+      markRackDirty();
+      return true;
+    },
+    [rackWidthInches, markRackDirty],
+  );
 
   const placedDevices = devices.filter((d) => d.rackPosition !== undefined);
 
@@ -821,6 +927,10 @@ export function RackPlanner({
               />
               <p className="ml-2 mt-1 text-sm text-gray-600">
                 Import or add devices, then drag them into the rack. Each row is 1U; device height can be multiple U.
+              </p>
+              <p className="ml-2 mt-1 text-xs font-medium text-[#003366]">
+                Rack width {rackWidthInches}&quot; — on the same U, combined device widths cannot exceed {rackWidthInches}
+                &quot; (edit device → pencil icon for width &amp; offset).
               </p>
               <p className="ml-2 mt-2 text-xs text-gray-500">
                 {devices.length} device{devices.length !== 1 ? 's' : ''} · {placedDevices.length} placed
@@ -918,8 +1028,8 @@ export function RackPlanner({
                 Build a new rack
               </h1>
               <p className="font-cable-ui mt-4 max-w-2xl text-base leading-relaxed text-white/90 sm:text-lg">
-                Choose rack size below, then import a parts list (CSV) or add devices manually. After gear is on the rack,
-                drag items into the diagram.
+                Choose rack size below, then import a parts list (CSV) or add devices manually. After gear is in your
+                list, the rack workspace opens and you can drag items into the diagram.
               </p>
             </div>
 
@@ -954,7 +1064,7 @@ export function RackPlanner({
                 </h2>
                 <p className="font-cable-ui mt-3 max-w-xl text-base text-slate-700">
                   Add gear without a file — search the catalog or enter a custom device. It appears in the unassigned
-                  list as soon as the rack workspace opens.
+                  list when the rack workspace opens.
                 </p>
                 <div className="mt-6">
                   <ManualDeviceAdd onAddDevice={handleAddManualDevice} uiVariant="cable" />
@@ -1053,10 +1163,9 @@ export function RackPlanner({
           pendingLeaveAfterSaveRef.current = false;
           setSaveRackModalOpen(false);
         }}
-        initialName={rackName}
-        hasRackId={Boolean(rackId)}
-        onUpdateCurrent={handleSaveRackUpdateCurrent}
-        onSaveAsNew={handleSaveRackAsNew}
+        initialRackName={rackName}
+        hasPersistedRack={Boolean(rackId)}
+        onSave={handleSaveRack}
       />
 
       <RackDeviceEditor
@@ -1065,6 +1174,7 @@ export function RackPlanner({
         onClose={() => setEditingDevice(null)}
         onSave={handleSaveDevice}
         inchesPerRU={inchesPerRU}
+        rackWidthInches={rackWidthInches}
       />
 
       <CsvUnmatchedReviewModal
@@ -1127,6 +1237,7 @@ export function RackPlanner({
           onClose={handleDualClose}
           onSave={handleDualSave}
           inchesPerRU={inchesPerRU}
+          rackWidthInches={rackWidthInches}
         />
       )}
     </DndProvider>

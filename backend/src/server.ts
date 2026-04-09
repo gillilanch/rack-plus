@@ -5,6 +5,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { prisma } from './db/client';
 import { racksRouter } from './routes/racks';
+import { employeesRouter } from './routes/employees';
 import { adminRouter } from './routes/admin';
 import { errorHandler } from './middleware/errorHandler';
 
@@ -38,6 +39,7 @@ app.get('/health', async (_req, res, next) => {
   }
 });
 
+app.use('/api/employees', employeesRouter);
 app.use('/api/racks', racksRouter);
 app.use('/admin', adminRouter);
 
