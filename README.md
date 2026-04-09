@@ -4,7 +4,7 @@ Rack configure. Connect.
 
 ## How to run the app
 
-**Before anything else:** copy [`backend/.env.example`](backend/.env.example) to `backend/.env` and set `DATABASE_URL` (defaults match Docker Postgres below).
+**Before anything else:** copy [`backend/.env.example`](backend/.env.example) to `backend/.env` and set `DATABASE_URL` (local Postgres or Docker, depending on how you run Postgres).
 
 ---
 
@@ -41,26 +41,37 @@ You need **two terminals** and **Postgres** running.
 
 All commands from the **repo root** unless noted.
 
-1. Start Postgres:
+1. **Start Postgres** (pick one):
+   - **No Docker:** e.g. `brew services start postgresql@16` and a `DATABASE_URL` like `postgresql://YOUR_USERNAME@localhost:5432/rackapp` in `backend/.env`.
+   - **Docker:** `docker compose up -d` and match `DATABASE_URL` to compose.
 
-   ```bash
-   docker compose up -d
-   ```
-
-2. Install dependencies, migrate, build, run **one** server (API + website on the same port):
+2. Install dependencies, migrate, and build:
 
    ```bash
    cd backend && npm ci && npx prisma migrate deploy
    cd ../frontend && npm ci && npm run build
-   cd ../backend && npm run build && NODE_ENV=production npm start
+   cd ../backend && npm run build
    ```
 
-3. **On other computers on the same network:** open  
+3. **Run the server** (API + website on one port):
+   - **Simple (no Docker assumed in the script):** from repo root:
+
+     ```bash
+     ./start.sh
+     ```
+
+   - **Or manually:**
+
+     ```bash
+     cd backend && NODE_ENV=production npm start
+     ```
+
+4. **On other computers on the same network:** open  
    `http://<this-Mac’s-name>.local:4000`  
    or `http://<this-Mac’s-LAN-IP>:4000`  
    (change the port in `backend/.env` if you changed `PORT`).
 
-4. **Check it’s working:** open `http://…/health` — you should see `{"ok":true}`.
+5. **Check it’s working:** open `http://…/health` — you should see `{"ok":true}`.
 
 **Admin (only on the server Mac):** `http://localhost:4000/admin` — delete racks, wipe all, restart (see below).
 
