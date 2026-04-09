@@ -9,6 +9,7 @@ import {
 } from 'react';
 import { useDrag, useDrop } from 'react-dnd';
 import type { RackConnection, RackDevice } from '../types/rack';
+import { getDeviceDisplayName } from '../utils/deviceDisplay';
 import { RackCableOverlay } from './RackCableOverlay';
 import { Trash2, Edit, GripVertical } from 'lucide-react';
 import { DEFAULT_INCHES_PER_RU, DEFAULT_RACK_WIDTH_INCHES, rackFaceWidthPx } from '../utils/rackUnits';
@@ -132,7 +133,9 @@ function DraggableDevice({ device, unitHeightPx, onEdit, onRemove }: DraggableDe
           </button>
         </div>
         <div className="min-w-0 flex-1 pr-2">
-          <div className="truncate text-xs font-medium text-gray-900 sm:text-sm">{device.name}</div>
+          <div className="truncate text-xs font-medium text-gray-900 sm:text-sm">
+            {getDeviceDisplayName(device)}
+          </div>
           <div className="truncate text-[10px] text-gray-500 sm:text-xs">
             {device.heightInU}U • {device.category}
           </div>

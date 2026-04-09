@@ -1,5 +1,6 @@
 import type { Device } from '../data/equipment';
 import type { RackDevice } from '../types/rack';
+import { getDeviceDisplayName } from './deviceDisplay';
 
 const CATEGORY_MAP: Record<string, Device['category']> = {
   Camera: 'Camera',
@@ -18,9 +19,12 @@ const CATEGORY_MAP: Record<string, Device['category']> = {
 export function normalizeRackDeviceForCableFinder(device: RackDevice): Device {
   const cat = String(device.category);
   const category = CATEGORY_MAP[cat] ?? 'Interface';
+  const display = getDeviceDisplayName(device);
   return {
     id: device.id,
-    name: device.name,
+    name: display,
+    manufacturer: device.manufacturer,
+    model: device.model,
     category,
     ports: device.ports ?? [],
   };

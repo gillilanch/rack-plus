@@ -1,4 +1,5 @@
 import { Device } from '../data/equipment';
+import { getDeviceDisplayName, getDeviceSearchBlob } from '../utils/deviceDisplay';
 import { ChevronDown, Search, X, Star } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 import { isCustomDevice } from '../utils/customDevices';
@@ -34,9 +35,10 @@ export function DeviceSelector({
   }, {} as Record<string, Device[]>);
 
   // Filter devices based on search term
-  const filteredDevices = devices.filter(device =>
-    device.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    device.category.toLowerCase().includes(searchTerm.toLowerCase())
+  const q = searchTerm.toLowerCase();
+  const filteredDevices = devices.filter(
+    (device) =>
+      getDeviceSearchBlob(device).includes(q) || device.category.toLowerCase().includes(q),
   );
 
   const filteredByCategory = filteredDevices.reduce((acc, device) => {
@@ -115,7 +117,7 @@ export function DeviceSelector({
           <input
             ref={inputRef}
             type="text"
-            value={selectedDevice ? selectedDevice.name : searchTerm}
+            value={selectedDevice ? getDeviceDisplayName(selectedDevice) : searchTerm}
             onChange={(e) => {
               setSearchTerm(e.target.value);
               setIsOpen(true);
@@ -164,7 +166,7 @@ export function DeviceSelector({
                       >
                         <div className="flex items-center gap-2">
                           <div className="flex-1">
-                            <div className="font-medium text-gray-900">{device.name}</div>
+                            <div className="font-medium text-gray-900">{getDeviceDisplayName(device)}</div>
                             <div className="text-xs text-gray-500 mt-0.5">
                               {device.ports.length} port{device.ports.length !== 1 ? 's' : ''}
                             </div>

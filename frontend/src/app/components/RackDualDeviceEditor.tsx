@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { X, Plus, Trash2 } from 'lucide-react';
 import type { RackDevice } from '../types/rack';
+import { getDeviceDisplayName } from '../utils/deviceDisplay';
 import type { ConnectorType, Port } from '../data/equipment';
 import { DEFAULT_INCHES_PER_RU, inchesFromRU, ruFromInches } from '../utils/rackUnits';
 
@@ -83,7 +84,7 @@ function DevicePortSection({
   return (
     <div className="space-y-4">
       <h3 className="text-lg font-semibold text-gray-900">{title}</h3>
-      <p className="text-sm text-gray-600">{editedDevice.name}</p>
+      <p className="text-sm text-gray-600">{getDeviceDisplayName(editedDevice)}</p>
 
       <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
         <h4 className="mb-2 text-sm font-medium text-gray-800">Category & height</h4>
@@ -273,7 +274,7 @@ export function RackDualDeviceEditor({
                 tab === 'a' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
               }`}
             >
-              {a.name}
+              {getDeviceDisplayName(a)}
             </button>
             <button
               type="button"
@@ -282,7 +283,7 @@ export function RackDualDeviceEditor({
                 tab === 'b' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
               }`}
             >
-              {b.name}
+              {getDeviceDisplayName(b)}
             </button>
           </div>
         </div>

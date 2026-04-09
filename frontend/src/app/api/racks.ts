@@ -1,6 +1,14 @@
 import type { RackConfiguration } from '../types/rack';
+import { normalizeRackDeviceIdentity } from '../utils/deviceDisplay';
 
 const BASE = '/api/racks';
+
+function normalizeConfigDevices(config: RackConfiguration): RackConfiguration {
+  return {
+    ...config,
+    devices: config.devices.map((d) => normalizeRackDeviceIdentity({ ...d }) as RackConfiguration['devices'][0]),
+  };
+}
 
 export type RackSummary = {
   id: string;
@@ -33,23 +41,24 @@ export async function createRack(
   const res = await fetch(BASE, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body: JSON.stringify(normalizeConfigDevices(body as RackConfiguration)),
   });
   return handleJson(res);
 }
 
 export async function saveRack(config: RackConfiguration): Promise<RackConfiguration> {
+  const normalized = normalizeConfigDevices(config);
   const res = await fetch(`${BASE}/${encodeURIComponent(config.id)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      name: config.name,
-      totalHeight: config.totalHeight,
-      inchesPerRU: config.inchesPerRU,
-      rackWidthInches: config.rackWidthInches,
-      slackAllowance: config.slackAllowance,
-      devices: config.devices,
-      connections: config.connections,
+      name: normalized.name,
+      totalHeight: normalized.totalHeight,
+      inchesPerRU: normalized.inchesPerRU,
+      rackWidthInches: normalized.rackWidthInches,
+      slackAllowance: normalized.slackAllowance,
+      devices: normalized.devices,
+      connections: normalized.connections,
     }),
   });
   return handleJson(res);

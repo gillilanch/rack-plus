@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { Upload, FileSpreadsheet, AlertCircle, Download, Link2, ListChecks } from 'lucide-react';
 import Papa from 'papaparse';
+import { getDeviceDisplayName } from '../utils/deviceDisplay';
 import {
   deviceCategoryToManualLabel,
   mergeBuiltInAndCustomDevices,
@@ -40,6 +41,10 @@ interface CSVImportProps {
   onReopenCsvReview?: () => void;
   /** When set, download exports current rack parts + connections instead of a blank template. */
   rackExportContext?: CsvRackExportContext;
+  /** Matches Cable Identification System palette (navy / red / slate). */
+  uiVariant?: 'default' | 'cable';
+  /** Hide CSV download (template / rack export) — e.g. on the pre-rack import screen. */
+  showCsvDownload?: boolean;
 }
 
 function partitionCandidates(
@@ -58,12 +63,21 @@ function partitionCandidates(
   for (const c of candidates) {
     const resolved = resolvePartsNameToCatalogDevice(c.text, pool);
     if (resolved) {
-      const key = resolved.device.name.toLowerCase();
+      const mfr = (resolved.device.manufacturer ?? '').trim();
+      const mdl = (resolved.device.model ?? '').trim();
+      const displayName = getDeviceDisplayName({
+        name: resolved.device.name,
+        manufacturer: mfr,
+        model: mdl,
+      });
+      const key = displayName.toLowerCase();
       const existing = matchedMap.get(key);
       if (!existing) {
         matchedMap.set(key, {
           id: `imported-${batchId}-m-${mIdx++}`,
-          name: resolved.device.name,
+          name: displayName,
+          manufacturer: mfr,
+          model: mdl,
           category: deviceCategoryToManualLabel(resolved.device.category) as RackDevice['category'],
           heightInU: Math.max(1, c.heightInU),
           physicalHeightInches: c.physicalHeightInches,
@@ -109,7 +123,10 @@ export function CSVImport({
   pendingUnmatchedCount = 0,
   onReopenCsvReview,
   rackExportContext,
+  uiVariant = 'default',
+  showCsvDownload = true,
 }: CSVImportProps) {
+  const cable = uiVariant === 'cable';
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -247,7 +264,7 @@ export function CSVImport({
   };
 
   return (
-    <div className="space-y-4">
+    <div className={`space-y-4 ${cable ? 'font-cable-ui' : ''}`}>
       {emptyRackExportConfirmOpen && (
         <div
           className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4"
@@ -277,7 +294,7 @@ export function CSVImport({
                   setEmptyRackExportConfirmOpen(false);
                   runRackExportDownload();
                 }}
-                className="rounded-lg bg-[#003366] px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+                className="rounded-lg bg-[#003366] px-4 py-2 text-sm font-medium text-white hover:bg-[#004080]"
               >
                 Yes, continue
               </button>
@@ -291,27 +308,51 @@ export function CSVImport({
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
         className={`rounded-xl border-2 border-dashed p-8 text-center transition-colors ${
-          isDragging ? 'border-blue-500 bg-blue-50' : 'border-gray-300 bg-gray-50 hover:border-gray-400'
+          isDragging
+            ? cable
+              ? 'border-[#CC0000] bg-red-50/50'
+              : 'border-blue-500 bg-blue-50'
+            : cable
+              ? 'border-slate-300 bg-slate-50/80 hover:border-[#003366]/45'
+              : 'border-gray-300 bg-gray-50 hover:border-gray-400'
         }`}
       >
         <input ref={fileInputRef} type="file" accept=".csv,.txt" onChange={handleFileInput} className="hidden" />
 
-        <div className="flex flex-col items-center gap-4">
-          <div className="rounded-full bg-white p-4 shadow-sm">
-            <FileSpreadsheet className="size-12 text-blue-600" />
-          </div>
+        <div className={`flex flex-col items-center ${cable ? 'gap-5' : 'gap-4'}`}>
+          {!cable && (
+            <div className="rounded-full bg-white p-4 shadow-sm">
+              <FileSpreadsheet className="size-12 text-blue-600" />
+            </div>
+          )}
 
-          <div>
-            <h3 className="mb-1 font-semibold text-gray-900">Import rack parts list</h3>
-            <p className="text-sm text-gray-600">
-              All text cells are scanned. Matched names join the rack; others open a review panel.
-            </p>
-          </div>
+          {cable ? (
+            <>
+              <FileSpreadsheet className="size-11 text-[#003366]" aria-hidden />
+              <div className="text-center">
+                <h3 className="font-cable-display text-2xl font-bold tracking-tight text-[#003366] sm:text-3xl">
+                  Import Parts List
+                </h3>
+                <p className="font-cable-display mt-2 text-sm font-semibold uppercase tracking-[0.15em] text-slate-600">
+                  Supported format: .csv
+                </p>
+              </div>
+            </>
+          ) : (
+            <div>
+              <h3 className="mb-1 font-semibold text-gray-900">Import rack parts list</h3>
+              <p className="text-sm text-gray-600">
+                All text cells are scanned. Matched names join the rack; others open a review panel.
+              </p>
+            </div>
+          )}
 
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            className="flex items-center gap-2 rounded-lg bg-[#003366] px-6 py-2 font-medium text-white transition-colors hover:bg-blue-700"
+            className={`flex items-center gap-2 rounded-lg bg-[#003366] px-6 py-2 text-white transition-colors hover:bg-[#004080] ${
+              cable ? 'font-cable-display text-sm font-bold uppercase tracking-[0.12em]' : 'font-medium'
+            }`}
           >
             <Upload className="size-5" />
             Choose file
@@ -367,35 +408,92 @@ export function CSVImport({
         </div>
       )}
 
-      <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
-        <div className="mb-2 text-sm font-medium text-blue-900">CSV format</div>
-        <div className="space-y-1 text-xs text-blue-800">
-          <div>
-            <strong>Full sheet:</strong> Every text cell in every column and row is scanned (duplicates merged).
-            Numbers-only cells are ignored.
-          </div>
-          <div>
-            <strong>With headers:</strong> Use <code className="rounded bg-white px-1">name</code>,{' '}
-            <code className="rounded bg-white px-1">category</code>,{' '}
-            <code className="rounded bg-white px-1">heightInches</code> or{' '}
-            <code className="rounded bg-white px-1">heightU</code> on the row that contains each name.
-          </div>
-        </div>
+      <div
+        className={
+          cable
+            ? 'overflow-hidden rounded-lg border-2 border-slate-300 bg-white shadow-[0_4px_20px_-6px_rgba(0,51,102,0.2)]'
+            : 'rounded-lg border border-blue-200 bg-blue-50 p-4'
+        }
+      >
+        {cable ? (
+          <>
+            <div className="flex flex-wrap items-center justify-between gap-2 bg-gradient-to-r from-[#003366] via-[#004080] to-[#003366] px-4 py-3 text-white">
+              <span className="font-cable-display text-sm font-bold uppercase tracking-[0.22em]">CSV format</span>
+              <span className="font-cable-display rounded border border-white/35 bg-white/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.18em] text-white/95">
+                File spec
+              </span>
+            </div>
+            <div className="divide-y divide-slate-200 bg-white">
+              <div className="flex flex-col gap-3 px-4 py-4 sm:flex-row sm:gap-5 sm:py-3">
+                <div className="shrink-0 sm:w-36 sm:pt-0.5">
+                  <span className="font-cable-display inline-block rounded border-2 border-[#CC0000] bg-red-50 px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-[#CC0000]">
+                    Required
+                  </span>
+                </div>
+                <p className="font-cable-ui text-sm leading-relaxed text-slate-700">
+                  <span className="font-semibold text-[#003366]">Device name</span> — be as specific as you can
+                  (manufacturer, model, and series). More specific names match the catalog more reliably.
+                </p>
+              </div>
+              <div className="flex flex-col gap-3 px-4 py-4 sm:flex-row sm:gap-5 sm:py-3">
+                <div className="shrink-0 sm:w-36 sm:pt-0.5">
+                  <span className="font-cable-display inline-block rounded border-2 border-[#003366] bg-slate-50 px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-[#003366]">
+                    Encouraged
+                  </span>
+                </div>
+                <p className="font-cable-ui text-sm leading-relaxed text-slate-700">
+                  <span className="font-semibold text-[#003366]">Device manufacturer + model</span> — you can use
+                  columns <code className="rounded bg-white/80 px-1 text-slate-900">manufacturer</code> and{' '}
+                  <code className="rounded bg-white/80 px-1 text-slate-900">model</code> (or{' '}
+                  <code className="rounded bg-white/80 px-1 text-slate-900">modelNumber</code>) per row; they are
+                  combined for matching. Also encouraged:{' '}
+                  <span className="font-semibold text-[#003366]">rack units (U)</span>.
+                </p>
+              </div>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="mb-2 text-sm font-semibold text-blue-900">CSV format</div>
+            <div className="space-y-1 text-xs text-blue-800">
+              <div>
+                <strong>Full sheet:</strong> Every text cell in every column and row is scanned (duplicates merged).
+                Numbers-only cells are ignored.
+              </div>
+              <div>
+                <strong>With headers:</strong> Use <code className="rounded bg-white px-1">name</code>,{' '}
+                <code className="rounded bg-white px-1">category</code>,{' '}
+                <code className="rounded bg-white px-1">heightInches</code> or{' '}
+                <code className="rounded bg-white px-1">heightU</code> on the row that contains each name.
+              </div>
+            </div>
+          </>
+        )}
       </div>
 
-      <button
-        type="button"
-        onClick={handleDownloadTemplate}
-        className="flex items-center gap-2 rounded-lg bg-[#003366] px-6 py-2 font-medium text-white transition-colors hover:bg-blue-700"
-      >
-        <Download className="size-5" />
-        {rackExportContext ? 'Download rack export (CSV)' : 'Download template'}
-      </button>
-      {rackExportContext && (
-        <p className="text-xs text-gray-600">
-          Exports every part currently on the rack and how each is connected (other device and port path). Use when the
-          rack is empty to get headers only — you will be asked to confirm.
-        </p>
+      {showCsvDownload && (
+        <>
+          <button
+            type="button"
+            onClick={handleDownloadTemplate}
+            className="flex items-center gap-2 rounded-lg bg-[#003366] px-6 py-2 font-medium text-white transition-colors hover:bg-[#004080]"
+          >
+            <Download className="size-5" />
+            {rackExportContext ? 'Download rack export (CSV)' : 'Download template'}
+          </button>
+          {rackExportContext && !cable && (
+            <p className="text-xs text-gray-600">
+              Exports every part currently on the rack and how each is connected (other device and port path). Use when
+              the rack is empty to get headers only — you will be asked to confirm.
+            </p>
+          )}
+          {rackExportContext && cable && (
+            <p className="text-xs text-slate-600">
+              Download includes parts on the rack and connection paths. Empty rack → headers only (confirm when
+              prompted).
+            </p>
+          )}
+        </>
       )}
     </div>
   );

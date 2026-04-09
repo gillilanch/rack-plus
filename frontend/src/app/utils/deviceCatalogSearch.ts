@@ -1,5 +1,6 @@
 import type { Device } from '../data/equipment';
 import { devices as builtInDevices } from '../data/equipment';
+import { getDeviceSearchBlob } from './deviceDisplay';
 import { getCustomDevices } from './customDevices';
 
 export function mergeBuiltInAndCustomDevices(): Device[] {
@@ -44,13 +45,25 @@ function scoreNameMatch(query: string, deviceName: string): number {
   return 0;
 }
 
+function deviceMatchScore(query: string, d: Device): number {
+  const q = query.trim();
+  if (!q) return 0;
+  const blob = getDeviceSearchBlob(d);
+  const parts = [blob, d.name, d.manufacturer ?? '', d.model ?? ''].filter(Boolean);
+  let best = 0;
+  for (const p of parts) {
+    best = Math.max(best, scoreNameMatch(q, p));
+  }
+  return best;
+}
+
 /** Ranked suggestions for autocomplete (built-in + Fox / custom saved devices). */
 export function searchDevicesByName(query: string, pool: Device[], limit = 8): Device[] {
   const q = query.trim();
   if (!q) return [];
   const seen = new Set<string>();
   const scored = pool
-    .map((d) => ({ d, s: scoreNameMatch(q, d.name) }))
+    .map((d) => ({ d, s: deviceMatchScore(q, d) }))
     .filter((x) => x.s > 0)
     .sort((a, b) => b.s - a.s);
   const out: Device[] = [];
@@ -65,7 +78,13 @@ export function searchDevicesByName(query: string, pool: Device[], limit = 8): D
 
 export function findExactDeviceByName(name: string, pool: Device[]): Device | undefined {
   const t = name.trim().toLowerCase();
-  return pool.find((d) => d.name.trim().toLowerCase() === t);
+  return pool.find((d) => {
+    if (d.name.trim().toLowerCase() === t) return true;
+    const m = (d.manufacturer ?? '').trim().toLowerCase();
+    const md = (d.model ?? '').trim().toLowerCase();
+    if (m && md && `${m} ${md}` === t) return true;
+    return false;
+  });
 }
 
 /**
@@ -86,7 +105,7 @@ export function resolvePartsNameToCatalogDevice(
   if (trimmed.length < 2) return null;
 
   const ranked = pool
-    .map((d) => ({ d, s: scoreNameMatch(trimmed, d.name) }))
+    .map((d) => ({ d, s: deviceMatchScore(trimmed, d) }))
     .filter((x) => x.s > 0)
     .sort((a, b) => b.s - a.s);
 

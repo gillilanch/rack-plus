@@ -2,6 +2,7 @@ import { useState, useRef } from 'react';
 import { Upload, Plus, X, FileText, Download, List } from 'lucide-react';
 import Papa from 'papaparse';
 import { RackDevice } from '../types/rack';
+import { getDeviceDisplayName } from '../utils/deviceDisplay';
 
 export interface ConnectionSpec {
   fromDeviceName: string;
@@ -106,8 +107,8 @@ Mac Mini,Dell Monitor,3`;
   };
 
   const placedDeviceNames = devices
-    .filter(d => d.rackPosition !== undefined)
-    .map(d => d.name);
+    .filter((d) => d.rackPosition !== undefined)
+    .map((d) => getDeviceDisplayName(d));
 
   if (!isOpen) {
     return (

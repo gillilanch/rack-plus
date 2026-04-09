@@ -21,6 +21,8 @@ export function RackDevicesColumn(props: {
   onReopenCsvReview?: () => void;
   rackExportContext?: CsvRackExportContext;
   onAddManualDevice: (data: {
+    manufacturer: string;
+    model: string;
     name: string;
     category: string;
     heightInU: number;
@@ -40,7 +42,7 @@ export function RackDevicesColumn(props: {
     onAddManualDevice,
   } = props;
   return (
-    <section className="flex h-full min-h-0 flex-col gap-6 rounded-xl border border-gray-200 bg-white p-6 shadow-sm [contain:layout]">
+    <section className="flex h-full min-h-0 flex-col gap-6 rounded-xl border-2 border-slate-200 bg-white p-6 shadow-xl [contain:layout]">
       <div className="min-h-[10rem] shrink-0 rounded-lg border border-gray-100 bg-slate-50/70 p-2 lg:min-h-0 lg:flex-1 lg:overflow-hidden">
         <UnassignedDevices
           devices={devices}
@@ -49,18 +51,21 @@ export function RackDevicesColumn(props: {
           onReturnFromRack={onReturnFromRack}
         />
       </div>
-      <div className="shrink-0 border-t border-gray-100 pt-6">
-        <h3 className="mb-4 font-semibold text-gray-900">Add more devices</h3>
+      <div className="shrink-0 border-t border-slate-200 pt-6">
+        <h3 className="mb-4 text-xs font-bold uppercase tracking-[0.2em] text-[#CC0000]">Add more devices</h3>
         <CSVImport
           onCsvImportComplete={onCsvImportComplete}
           pendingUnmatchedCount={pendingCsvUnmatchedCount}
           onReopenCsvReview={onReopenCsvReview}
           rackExportContext={rackExportContext}
+          uiVariant="cable"
         />
       </div>
       <div className="shrink-0 border-t border-gray-100 pt-6">
-        <h3 className="mb-4 font-semibold text-gray-900">Add a device manually</h3>
-        <ManualDeviceAdd onAddDevice={onAddManualDevice} />
+        <h3 className="mb-4 text-xs font-bold uppercase tracking-[0.2em] text-[#CC0000]">
+          Add a device manually
+        </h3>
+        <ManualDeviceAdd onAddDevice={onAddManualDevice} uiVariant="cable" />
       </div>
       <RackCableConnectionsPanel devices={devices} />
     </section>
@@ -84,7 +89,7 @@ export function RackPreviewColumn(props: {
   onRemoveConnection?: (connectionId: string) => void;
 }) {
   return (
-    <section className="rack-preview-column flex min-h-[min(60vh,22rem)] flex-col rounded-xl border border-gray-200 bg-white p-6 shadow-sm lg:h-full lg:min-h-0 [contain:layout]">
+    <section className="rack-preview-column flex min-h-[min(60vh,22rem)] flex-col rounded-xl border-2 border-slate-200 bg-white p-6 shadow-xl lg:h-full lg:min-h-0 [contain:layout]">
       <div className="flex min-h-0 flex-1 flex-col">
         <RackVisualizer
           fillParent
@@ -121,6 +126,8 @@ export function RackPlannerWorkArea(props: {
   onReopenCsvReview?: () => void;
   rackExportContext?: CsvRackExportContext;
   onAddManualDevice: (data: {
+    manufacturer: string;
+    model: string;
     name: string;
     category: string;
     heightInU: number;

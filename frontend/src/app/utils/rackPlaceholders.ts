@@ -1,3 +1,5 @@
+import { getDeviceDisplayName } from './deviceDisplay';
+
 /**
  * Device names stripped when loading a rack from the API (demo / mistaken imports).
  * Matching is by letters+digits only so "Sony px-W-400", "Sony PXW-X400", etc. all match.
@@ -14,6 +16,10 @@ const PLACEHOLDER_NAME_KEYS = new Set([
   'sonypxww400', // Sony PXW-W-400, …
 ]);
 
-export function filterPlaceholderRackDevices<T extends { name: string }>(devices: T[]): T[] {
-  return devices.filter((d) => !PLACEHOLDER_NAME_KEYS.has(normalizeNameKey(d.name)));
+export function filterPlaceholderRackDevices<T extends { name: string; manufacturer?: string; model?: string }>(
+  devices: T[],
+): T[] {
+  return devices.filter(
+    (d) => !PLACEHOLDER_NAME_KEYS.has(normalizeNameKey(getDeviceDisplayName(d))),
+  );
 }

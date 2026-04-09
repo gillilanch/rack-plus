@@ -1,5 +1,6 @@
 import { ConnectionSolution } from '../utils/cableFinder';
 import { Device } from '../data/equipment';
+import { getDeviceDisplayName } from '../utils/deviceDisplay';
 import { ArrowRight } from 'lucide-react';
 
 interface ConnectionDiagramProps {
@@ -19,7 +20,7 @@ export function ConnectionDiagram({ fromDevice, toDevice, solution }: Connection
         {/* Source Device */}
         <div className="px-3 py-2 bg-white border-2 border-blue-400 rounded-lg shadow-sm">
           <div className="text-xs text-gray-500">From</div>
-          <div className="font-semibold text-gray-900 text-sm">{fromDevice.name}</div>
+          <div className="font-semibold text-gray-900 text-sm">{getDeviceDisplayName(fromDevice)}</div>
         </div>
 
         <ArrowRight className="size-4 text-gray-400 flex-shrink-0" />
@@ -64,7 +65,7 @@ export function ConnectionDiagram({ fromDevice, toDevice, solution }: Connection
         {/* Destination Device */}
         <div className="px-3 py-2 bg-white border-2 border-purple-400 rounded-lg shadow-sm">
           <div className="text-xs text-gray-500">To</div>
-          <div className="font-semibold text-gray-900 text-sm">{toDevice.name}</div>
+          <div className="font-semibold text-gray-900 text-sm">{getDeviceDisplayName(toDevice)}</div>
         </div>
       </div>
     </div>

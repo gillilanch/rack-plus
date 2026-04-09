@@ -1,5 +1,7 @@
 // Equipment database with ports and connectors
 
+import { inferManufacturerModelFromLegacyName } from '../utils/deviceDisplay';
+
 export type ConnectorType = 
   | 'HDMI' | 'SDI' | 'XLR' | 'USB-C' | 'USB-A' | 'Thunderbolt' 
   | '3.5mm' | '1/4 TRS' | 'RCA' | 'DisplayPort' | 'Mini DisplayPort'
@@ -17,6 +19,10 @@ export interface Port {
 export interface Device {
   id: string;
   name: string;
+  /** Maker (searchable; stored on rack devices and custom catalog entries). */
+  manufacturer?: string;
+  /** Model name or number (searchable). */
+  model?: string;
   category: 'Camera' | 'Laptop' | 'Recording Deck' | 'Audio' | 'Monitor' | 'Interface';
   ports: Port[];
 }
@@ -38,7 +44,7 @@ export interface Adapter {
   notes?: string;
 }
 
-export const devices: Device[] = [
+const rawDevices: Device[] = [
   // Cameras
   {
     id: 'sony-fx6',
@@ -195,6 +201,26 @@ export const devices: Device[] = [
       { type: 'USB-C', direction: 'both', label: 'USB Audio' },
     ]
   },
+  {
+    id: 'yamaha-mg10xu',
+    name: 'Yamaha MG10XU',
+    category: 'Audio',
+    ports: [
+      { type: 'XLR', direction: 'input', label: 'Mic', count: 4 },
+      { type: '1/4 TRS', direction: 'both', label: 'Line', count: 3 },
+      { type: 'USB-C', direction: 'both', label: 'USB' },
+    ]
+  },
+  {
+    id: 'yamaha-ql5',
+    name: 'Yamaha QL5',
+    category: 'Audio',
+    ports: [
+      { type: 'XLR', direction: 'input', label: 'Analog in', count: 16 },
+      { type: 'XLR', direction: 'output', label: 'Analog out', count: 8 },
+      { type: 'Ethernet', direction: 'both', label: 'Dante' },
+    ]
+  },
 
   // Monitors
   {
@@ -228,6 +254,11 @@ export const devices: Device[] = [
     ]
   },
 ];
+
+export const devices: Device[] = rawDevices.map((d) => {
+  const { manufacturer, model } = inferManufacturerModelFromLegacyName(d.name);
+  return { ...d, manufacturer, model };
+});
 
 export const cables: Cable[] = [
   // HDMI Cables

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { X, Plus, Trash2 } from 'lucide-react';
 import { Device, Port, ConnectorType } from '../data/equipment';
+import { getDeviceDisplayName, inferManufacturerModelFromLegacyName } from '../utils/deviceDisplay';
 
 const connectorTypes: ConnectorType[] = [
   'HDMI',
@@ -53,7 +54,8 @@ export function AddDeviceModal({
   cloneSource = null,
   prefillName = null,
 }: AddDeviceModalProps) {
-  const [deviceName, setDeviceName] = useState('');
+  const [manufacturer, setManufacturer] = useState('');
+  const [model, setModel] = useState('');
   const [category, setCategory] = useState<Device['category']>('Camera');
   const [ports, setPorts] = useState<Port[]>(defaultPorts);
   const [error, setError] = useState('');
@@ -62,24 +64,45 @@ export function AddDeviceModal({
     if (!isOpen) return;
     setError('');
     if (editingDevice) {
-      setDeviceName(editingDevice.name);
+      const m = (editingDevice.manufacturer ?? '').trim();
+      const md = (editingDevice.model ?? '').trim();
+      if (m || md) {
+        setManufacturer(m);
+        setModel(md);
+      } else {
+        const inf = inferManufacturerModelFromLegacyName(editingDevice.name);
+        setManufacturer(inf.manufacturer);
+        setModel(inf.model);
+      }
       setCategory(editingDevice.category);
       setPorts(clonePorts(editingDevice.ports));
       return;
     }
     if (cloneSource) {
-      setDeviceName(`${cloneSource.name} (copy)`);
+      const m = (cloneSource.manufacturer ?? '').trim();
+      const md = (cloneSource.model ?? '').trim();
+      if (m || md) {
+        setManufacturer(m);
+        setModel(`${md} (copy)`.trim());
+      } else {
+        const inf = inferManufacturerModelFromLegacyName(`${cloneSource.name} (copy)`);
+        setManufacturer(inf.manufacturer);
+        setModel(inf.model);
+      }
       setCategory(cloneSource.category);
       setPorts(clonePorts(cloneSource.ports));
       return;
     }
     if (prefillName?.trim()) {
-      setDeviceName(prefillName.trim());
+      const inf = inferManufacturerModelFromLegacyName(prefillName.trim());
+      setManufacturer(inf.manufacturer);
+      setModel(inf.model);
       setCategory('Interface');
       setPorts([...defaultPorts]);
       return;
     }
-    setDeviceName('');
+    setManufacturer('');
+    setModel('');
     setCategory('Camera');
     setPorts([...defaultPorts]);
   }, [isOpen, editingDevice?.id, cloneSource?.id, prefillName]);
@@ -104,16 +127,27 @@ export function AddDeviceModal({
     e.preventDefault();
     setError('');
 
-    if (!deviceName.trim()) {
-      setError('Device name is required');
+    const mfr = manufacturer.trim();
+    const mdl = model.trim();
+    if (!mfr || !mdl) {
+      setError('Manufacturer and model are required');
       return;
     }
 
-    const nameLc = deviceName.trim().toLowerCase();
-    const editingLc = editingDevice?.name.trim().toLowerCase();
+    const displayName = getDeviceDisplayName({ name: '', manufacturer: mfr, model: mdl });
+    const nameLc = displayName.trim().toLowerCase();
+    const editingLc = editingDevice
+      ? getDeviceDisplayName({
+          name: editingDevice.name,
+          manufacturer: editingDevice.manufacturer,
+          model: editingDevice.model,
+        })
+          .trim()
+          .toLowerCase()
+      : '';
     const nameTaken = existingDeviceNames.some((n) => n.trim().toLowerCase() === nameLc);
     if (nameTaken && nameLc !== editingLc) {
-      setError('A device with this name already exists');
+      setError('A device with this label already exists');
       return;
     }
 
@@ -133,7 +167,9 @@ export function AddDeviceModal({
 
     onSaveDevice({
       id,
-      name: deviceName.trim(),
+      name: displayName,
+      manufacturer: mfr,
+      model: mdl,
       category,
       ports: filteredPorts,
     });
@@ -173,16 +209,34 @@ export function AddDeviceModal({
             </div>
           )}
 
-          <div className="mb-4">
-            <label className="mb-2 block text-sm font-medium text-gray-700">Device name *</label>
-            <input
-              type="text"
-              value={deviceName}
-              onChange={(e) => setDeviceName(e.target.value)}
-              placeholder="e.g., Sony A7S III"
-              className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+          <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div>
+              <label className="mb-2 block text-sm font-medium text-gray-700">Manufacturer *</label>
+              <input
+                type="text"
+                value={manufacturer}
+                onChange={(e) => setManufacturer(e.target.value)}
+                placeholder="e.g. Yamaha, Sony"
+                autoComplete="organization"
+                className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <div>
+              <label className="mb-2 block text-sm font-medium text-gray-700">Model / model number *</label>
+              <input
+                type="text"
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                placeholder="e.g. MG10XU, FX6"
+                className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
           </div>
+          {(manufacturer.trim() || model.trim()) && (
+            <p className="mb-4 text-sm text-gray-600">
+              Saved as: <span className="font-medium text-gray-900">{getDeviceDisplayName({ name: '', manufacturer, model })}</span>
+            </p>
+          )}
 
           <div className="mb-6">
             <label className="mb-2 block text-sm font-medium text-gray-700">Category *</label>

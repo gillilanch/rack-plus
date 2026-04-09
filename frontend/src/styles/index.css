@@ -1,6 +1,17 @@
 @import './tailwind.css';
 @import './theme.css';
 
+/* Cable Identification System typography — display caps + readable UI body */
+@layer utilities {
+  .font-cable-display {
+    font-family: 'Barlow Semi Condensed', ui-sans-serif, system-ui, sans-serif;
+  }
+
+  .font-cable-ui {
+    font-family: 'IBM Plex Sans', ui-sans-serif, system-ui, sans-serif;
+  }
+}
+
 @media print {
   .no-print {
     display: none !important;

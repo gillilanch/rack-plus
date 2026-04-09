@@ -57,6 +57,31 @@ function getNameFieldKey(fields: string[]): string | undefined {
   return fields.find((f) => f.toLowerCase() === 'name');
 }
 
+/** If the row has separate manufacturer + model columns, return a single label for catalog matching. */
+function readManufacturerModelFromRow(row: Record<string, unknown>): string | null {
+  const mKeys = ['manufacturer', 'Manufacturer', 'deviceManufacturer', 'mfr', 'make', 'Make'];
+  const modelKeys = ['model', 'Model', 'modelNumber', 'model_number', 'deviceModel', 'device_model'];
+  let manufacturer = '';
+  let model = '';
+  for (const k of mKeys) {
+    const v = row[k];
+    if (typeof v === 'string' && v.trim()) {
+      manufacturer = v.trim();
+      break;
+    }
+  }
+  for (const k of modelKeys) {
+    const v = row[k];
+    if (typeof v === 'string' && v.trim()) {
+      model = v.trim();
+      break;
+    }
+  }
+  if (!manufacturer || !model) return null;
+  const combined = `${manufacturer} ${model}`.trim();
+  return shouldSkipCellValue(combined) ? null : combined;
+}
+
 /**
  * Walk every field on every row; each non-skipped string becomes a candidate.
  * Row-level height/category apply to cells in that row (name column preferred for primary label).
@@ -71,6 +96,17 @@ export function extractCandidatesFromObjectRows(
   for (const row of rows) {
     if (!row || typeof row !== 'object') continue;
     const meta = parseHeightFromRow(row);
+
+    const combinedMfrModel = readManufacturerModelFromRow(row);
+    if (combinedMfrModel) {
+      out.push({
+        text: combinedMfrModel,
+        heightInU: meta.heightInU,
+        category: meta.category,
+        physicalHeightInches: meta.physicalHeightInches,
+        fromNameColumn: true,
+      });
+    }
 
     for (const field of fields) {
       const v = row[field];

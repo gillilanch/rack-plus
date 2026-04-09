@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { X, Plus, Trash2 } from 'lucide-react';
 import { RackDevice } from '../types/rack';
+import { getDeviceDisplayName } from '../utils/deviceDisplay';
 import { Port, ConnectorType } from '../data/equipment';
 import { DEFAULT_INCHES_PER_RU, inchesFromRU, ruFromInches } from '../utils/rackUnits';
 
@@ -92,7 +93,14 @@ export function RackDeviceEditor({
   };
 
   const handleSave = () => {
-    onSave(editedDevice);
+    const m = (editedDevice.manufacturer ?? '').trim();
+    const md = (editedDevice.model ?? '').trim();
+    const name = getDeviceDisplayName({
+      name: editedDevice.name,
+      manufacturer: m,
+      model: md,
+    });
+    onSave({ ...editedDevice, manufacturer: m, model: md, name });
     onClose();
   };
 
@@ -103,7 +111,7 @@ export function RackDeviceEditor({
         <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
           <div>
             <h2 className="text-xl font-bold text-gray-900">Configure Device I/O</h2>
-            <p className="text-sm text-gray-600 mt-1">{editedDevice.name}</p>
+            <p className="text-sm text-gray-600 mt-1">{getDeviceDisplayName(editedDevice)}</p>
           </div>
           <button
             onClick={onClose}
@@ -117,6 +125,35 @@ export function RackDeviceEditor({
         <div className="p-6">
           {/* Category & rack height (applies to unassigned and placed devices) */}
           <div className="mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
+            <h3 className="mb-3 text-sm font-medium text-gray-800">Manufacturer & model</h3>
+            <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <label htmlFor="rack-edit-mfr" className="mb-1 block text-xs font-medium text-gray-600">
+                  Manufacturer
+                </label>
+                <input
+                  id="rack-edit-mfr"
+                  type="text"
+                  value={editedDevice.manufacturer ?? ''}
+                  onChange={(e) =>
+                    setEditedDevice({ ...editedDevice, manufacturer: e.target.value })
+                  }
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              <div>
+                <label htmlFor="rack-edit-model" className="mb-1 block text-xs font-medium text-gray-600">
+                  Model / model number
+                </label>
+                <input
+                  id="rack-edit-model"
+                  type="text"
+                  value={editedDevice.model ?? ''}
+                  onChange={(e) => setEditedDevice({ ...editedDevice, model: e.target.value })}
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+            </div>
             <h3 className="mb-3 text-sm font-medium text-gray-800">Category & height</h3>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>

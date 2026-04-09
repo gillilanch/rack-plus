@@ -1,5 +1,6 @@
 import { useDrag, useDrop } from 'react-dnd';
 import { RackDevice } from '../types/rack';
+import { getDeviceDisplayName } from '../utils/deviceDisplay';
 import { GripVertical, Edit, Trash2 } from 'lucide-react';
 
 /** ~7 device rows visible; remainder scrolls inside this panel. */
@@ -40,7 +41,7 @@ function DraggableUnassignedDevice({ device, onEdit, onRemove }: DraggableUnassi
           <GripVertical className="size-5 text-gray-400 flex-shrink-0" />
           <div className="min-w-0">
             <div className="font-medium text-gray-900 text-sm truncate">
-              {device.name}
+              {getDeviceDisplayName(device)}
             </div>
             <div className="flex items-center gap-2 text-xs text-gray-500 mt-0.5">
               <span>{device.heightInU}U</span>

@@ -29,6 +29,8 @@ model RackDevice {
   rackId               String       @map("rack_id")
   rack                 Rack         @relation(fields: [rackId], references: [id], onDelete: Cascade)
   name                 String
+  manufacturer         String       @default("")
+  deviceModel          String       @default("") @map("device_model")
   category             String
   heightInU            Int          @map("height_in_u")
   rackPosition         Int?         @map("rack_position")

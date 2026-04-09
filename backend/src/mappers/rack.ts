@@ -39,6 +39,8 @@ export function toRackConfiguration(rack: RackWithDevices) {
     devices: devicesSorted.map((d) => ({
       id: d.id,
       name: d.name,
+      manufacturer: d.manufacturer,
+      model: d.deviceModel,
       category: d.category,
       heightInU: d.heightInU,
       rackPosition: d.rackPosition ?? undefined,
@@ -64,6 +66,8 @@ function catalogIdFromDeviceId(deviceId: string): string | null {
 
 export type NestedRackDeviceCreate = {
   name: string;
+  manufacturer: string;
+  deviceModel: string;
   category: string;
   heightInU: number;
   rackPosition: number | null;
@@ -76,8 +80,16 @@ export type NestedRackDeviceCreate = {
 export function buildNestedDevices(
   devices: CreateRackBody['devices'] | UpdateRackBody['devices'],
 ): NestedRackDeviceCreate[] {
-  return devices.map((dev, index) => ({
-    name: dev.name,
+  return devices.map((dev, index) => {
+    const manufacturer = (dev.manufacturer ?? '').trim();
+    const deviceModel = (dev.model ?? '').trim();
+    const name =
+      (dev.name ?? '').trim() ||
+      [manufacturer, deviceModel].filter(Boolean).join(' ').trim();
+    return {
+    name,
+    manufacturer,
+    deviceModel,
     category: dev.category,
     heightInU: dev.heightInU,
     rackPosition: dev.rackPosition ?? null,
@@ -94,5 +106,6 @@ export function buildNestedDevices(
         sortOrder: pi,
       })),
     },
-  }));
+  };
+  });
 }

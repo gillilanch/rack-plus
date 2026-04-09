@@ -27,15 +27,29 @@ export const rackConnectionSchema = z.object({
   routeToYRatio: z.number().min(0).max(1).optional(),
 });
 
-export const rackDeviceSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  category: z.string(),
-  heightInU: z.number().int().positive(),
-  rackPosition: z.number().int().min(0).optional(),
-  physicalHeightInches: z.number().optional(),
-  ports: z.array(portSchema),
-});
+export const rackDeviceSchema = z
+  .object({
+    id: z.string(),
+    name: z.string(),
+    manufacturer: z.string().optional().default(''),
+    model: z.string().optional().default(''),
+    category: z.string(),
+    heightInU: z.number().int().positive(),
+    rackPosition: z.number().int().min(0).optional(),
+    physicalHeightInches: z.number().optional(),
+    ports: z.array(portSchema),
+  })
+  .superRefine((val, ctx) => {
+    const m = (val.manufacturer ?? '').trim();
+    const md = (val.model ?? '').trim();
+    const nm = (val.name ?? '').trim();
+    if (!nm && !(m || md)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Device must have a display name or manufacturer/model fields',
+      });
+    }
+  });
 
 const inchesPerRUSchema = z.number().positive().max(48);
 

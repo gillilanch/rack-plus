@@ -10,7 +10,7 @@ import {
   updateCustomDevice,
 } from '../utils/customDevices';
 import { AddDeviceModal } from './AddDeviceModal';
-
+import { getDeviceDisplayName, getDeviceSearchBlob } from '../utils/deviceDisplay';
 
 interface DeviceDatabaseModalProps {
   isOpen: boolean;
@@ -21,7 +21,7 @@ function matchesSearch(device: Device, q: string): boolean {
   if (!q.trim()) return true;
   const s = q.trim().toLowerCase();
   return (
-    device.name.toLowerCase().includes(s) ||
+    getDeviceSearchBlob(device).includes(s) ||
     device.category.toLowerCase().includes(s) ||
     device.ports.some((p) => p.type.toLowerCase().includes(s))
   );
@@ -60,8 +60,8 @@ export function DeviceDatabaseModal({ isOpen, onClose }: DeviceDatabaseModalProp
   );
 
   const existingNamesForForm = useMemo(() => {
-    const fromBuiltIn = builtInDevices.map((d) => d.name);
-    const fromCustom = custom.filter((d) => d.id !== editingDevice?.id).map((d) => d.name);
+    const fromBuiltIn = builtInDevices.map((d) => getDeviceDisplayName(d));
+    const fromCustom = custom.filter((d) => d.id !== editingDevice?.id).map((d) => getDeviceDisplayName(d));
     return [...fromBuiltIn, ...fromCustom];
   }, [custom, editingDevice?.id]);
 
@@ -108,7 +108,7 @@ export function DeviceDatabaseModal({ isOpen, onClose }: DeviceDatabaseModalProp
   };
 
   const handleDelete = (d: Device) => {
-    if (!window.confirm(`Remove “${d.name}” from your Fox equipment database?`)) return;
+    if (!window.confirm(`Remove “${getDeviceDisplayName(d)}” from your Fox equipment database?`)) return;
     deleteCustomDevice(d.id);
     refreshCustom();
   };
@@ -284,7 +284,7 @@ function DeviceDbRow({
           {expanded ? <ChevronDown className="size-5" /> : <ChevronRight className="size-5" />}
         </button>
         <div className="min-w-0 flex-1">
-          <div className="truncate font-medium text-gray-900">{device.name}</div>
+          <div className="truncate font-medium text-gray-900">{getDeviceDisplayName(device)}</div>
           <div className="text-xs text-gray-500">
             {device.category} · {device.ports.length} port{device.ports.length !== 1 ? 's' : ''}
             {variant === 'catalog' && (

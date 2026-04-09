@@ -1,4 +1,5 @@
 import { RackDevice, RackConnection } from '../types/rack';
+import { getDeviceDisplayName } from './deviceDisplay';
 import { Port } from '../data/equipment';
 import { findConnection } from './cableFinder';
 import { ConnectionSpec } from '../components/ConnectionSpecifier';
@@ -18,8 +19,10 @@ export function generateRackConnections(
     );
 
     sortedSpecs.forEach(spec => {
-      const fromDevice = placedDevices.find(d => d.name === spec.fromDeviceName);
-      const toDevice = placedDevices.find(d => d.name === spec.toDeviceName);
+      const fromDevice = placedDevices.find(
+        (d) => getDeviceDisplayName(d) === spec.fromDeviceName,
+      );
+      const toDevice = placedDevices.find((d) => getDeviceDisplayName(d) === spec.toDeviceName);
 
       if (fromDevice && toDevice) {
         const generatedConnections = createConnectionsBetweenDevices(
@@ -199,7 +202,7 @@ export function exportRackConfiguration(
     .sort((a, b) => (b.rackPosition || 0) - (a.rackPosition || 0));
   
   placedDevices.forEach(device => {
-    output += `\n[${device.rackPosition}U - ${device.rackPosition! + device.heightInU}U] ${device.name}\n`;
+    output += `\n[${device.rackPosition}U - ${device.rackPosition! + device.heightInU}U] ${getDeviceDisplayName(device)}\n`;
     output += `  Category: ${device.category}\n`;
     output += `  Height: ${device.heightInU}U\n`;
     if (device.ports.length > 0) {
@@ -223,7 +226,7 @@ export function exportRackConfiguration(
       const fromDevice = rackConfig.devices.find(d => d.id === conn.fromDeviceId);
       const toDevice = rackConfig.devices.find(d => d.id === conn.toDeviceId);
       
-      output += `\n${idx + 1}. ${fromDevice?.name} → ${toDevice?.name}\n`;
+      output += `\n${idx + 1}. ${fromDevice ? getDeviceDisplayName(fromDevice) : '?'} → ${toDevice ? getDeviceDisplayName(toDevice) : '?'}\n`;
       output += `   Cable: ${conn.cableType}\n`;
       output += `   From Port: ${conn.fromPort.type}`;
       if (conn.fromPort.label) output += ` (${conn.fromPort.label})`;
