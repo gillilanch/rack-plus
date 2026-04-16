@@ -1,6 +1,6 @@
 import type { Device } from '../data/equipment';
 import { devices as builtInDevices } from '../data/equipment';
-import { getDeviceSearchBlob } from './deviceDisplay';
+import { getDeviceSearchBlob, inferManufacturerModelFromLegacyName } from './deviceDisplay';
 import { getCustomDevices } from './customDevices';
 import { getServerCatalogDevices } from './serverCatalogCache';
 
@@ -110,8 +110,8 @@ function normalizeMfrModelToken(s: string): string {
  * (handles hyphen/spacing differences vs AVCAD / server catalog).
  */
 export function findDeviceByManufacturerModelLoose(manufacturer: string, model: string, pool: Device[]): Device | null {
-  const m = manufacturer.trim();
-  const md = model.trim();
+  const m = manufacturer.trim().replace(/[,\s]+$/g, '');
+  const md = model.trim().replace(/[,\s]+$/g, '');
   if (!m || !md) return null;
   const mL = m.toLowerCase();
   const mdL = md.toLowerCase();
@@ -147,6 +147,50 @@ export function resolveCsvImportRowToCatalogDevice(
     const combined = `${mfr} ${mdl}`.replace(/\s+/g, ' ');
     r = resolvePartsNameToCatalogDevice(combined, pool, exactLookup);
     if (r) return r;
+  }
+  return null;
+}
+
+export type UnmatchedRowLike = {
+  name: string;
+  manufacturer?: string;
+  model?: string;
+};
+
+/**
+ * Second pass for CSV import: rows that missed the first pass often still match the Fox/AVCAD
+ * server catalog if we (a) match only against server catalog, (b) infer mfr/model from the display name.
+ */
+export function tryResolveUnmatchedToCatalogDevice(
+  u: UnmatchedRowLike,
+  pool: Device[],
+): { device: Device; match: 'exact' | 'fuzzy' } | null {
+  const serverOnly = getServerCatalogDevices();
+  if (serverOnly.length > 0) {
+    const m = u.manufacturer?.trim();
+    const md = u.model?.trim();
+    if (m && md) {
+      const hit = findDeviceByManufacturerModelLoose(m, md, serverOnly);
+      if (hit) return { device: hit, match: 'exact' };
+    }
+    const inf = inferManufacturerModelFromLegacyName(u.name);
+    if (inf.manufacturer && inf.model) {
+      const hit2 = findDeviceByManufacturerModelLoose(inf.manufacturer, inf.model, serverOnly);
+      if (hit2) return { device: hit2, match: 'exact' };
+    }
+    const sLookup = buildDeviceExactLookup(serverOnly);
+    let r = resolvePartsNameToCatalogDevice(u.name.trim(), serverOnly, sLookup);
+    if (r) return r;
+    if (m && md) {
+      r = resolvePartsNameToCatalogDevice(`${m} ${md}`.replace(/\s+/g, ' '), serverOnly, sLookup);
+      if (r) return r;
+    }
+  }
+
+  const inf2 = inferManufacturerModelFromLegacyName(u.name);
+  if (inf2.manufacturer && inf2.model) {
+    const hit3 = findDeviceByManufacturerModelLoose(inf2.manufacturer, inf2.model, pool);
+    if (hit3) return { device: hit3, match: 'exact' };
   }
   return null;
 }

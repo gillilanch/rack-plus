@@ -337,6 +337,16 @@ function inferIdentityFromRow(
   return null;
 }
 
+/** Excel / Sheets sometimes emit a BOM on the first header — breaks "Manufacturer" key matching. */
+function sanitizeCsvRowKeys(row: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(row)) {
+    const clean = k.replace(/^\uFEFF/, '').trim();
+    out[clean] = v;
+  }
+  return out;
+}
+
 /**
  * One candidate per data row: label from manufacturer+model, else `name`, else inferred from other cells.
  */
@@ -351,9 +361,10 @@ export function extractCandidatesFromObjectRows(
 
   for (const row of rows) {
     if (!row || typeof row !== 'object') continue;
-    const meta = parseSheetRowSettings(row);
+    const clean = sanitizeCsvRowKeys(row as Record<string, unknown>);
+    const meta = parseSheetRowSettings(clean);
 
-    const mfrModel = readManufacturerModelFromRow(row);
+    const mfrModel = readManufacturerModelFromRow(clean);
     if (mfrModel) {
       out.push({
         text: mfrModel.combined,
@@ -374,7 +385,7 @@ export function extractCandidatesFromObjectRows(
     }
 
     if (nameKey) {
-      const nameVal = pickString(row, [nameKey]);
+      const nameVal = pickString(clean, [nameKey]);
       if (nameVal && !shouldSkipCellValue(nameVal)) {
         out.push({
           text: nameVal,
@@ -393,7 +404,7 @@ export function extractCandidatesFromObjectRows(
       }
     }
 
-    const inferred = inferIdentityFromRow(row, pool, exactLookup);
+    const inferred = inferIdentityFromRow(clean, pool, exactLookup);
     if (inferred) {
       out.push({
         text: inferred.text,

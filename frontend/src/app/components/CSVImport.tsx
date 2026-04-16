@@ -6,6 +6,7 @@ import {
   mergeBuiltInAndCustomDevices,
   resolveCsvImportRowToCatalogDevice,
   resolveImportCategory,
+  tryResolveUnmatchedToCatalogDevice,
 } from '../utils/deviceCatalogSearch';
 import { prefetchServerCatalogDevices } from '../utils/serverCatalogCache';
 import { getDeviceCategoryNames, prefetchDeviceCategories } from '../utils/deviceCategoryCache';
@@ -133,14 +134,58 @@ function partitionCandidates(
     }
   }
 
+  // Second pass: Fox AVCAD rows that missed first match (BOM headers, server-catalog-only keys, label quirks).
+  const finalUnmatched: CsvUnmatchedQueueItem[] = [];
+  for (const u of unmatchedList) {
+    const second = tryResolveUnmatchedToCatalogDevice(u, pool);
+    if (second) {
+      const key = u.name.trim().toLowerCase();
+      const existing = matchedMap.get(key);
+      const mfr = (u.manufacturer ?? second.device.manufacturer ?? '').trim();
+      const mdl = (u.model ?? second.device.model ?? '').trim();
+      if (!existing) {
+        matchedMap.set(key, {
+          id: `imported-${batchId}-m-${mIdx++}`,
+          name: u.name,
+          manufacturer: mfr,
+          model: mdl,
+          category: resolveImportCategory(u.category, dbCategoryNames),
+          heightInU: Math.max(1, u.heightInU),
+          physicalHeightInches: u.physicalHeightInches && u.physicalHeightInches > 0 ? u.physicalHeightInches : undefined,
+          deviceWidthInches: u.deviceWidthInches,
+          deviceDepthInches: u.deviceDepthInches,
+          sheetPower: u.sheetPower?.trim() || undefined,
+          ports: second.device.ports.length > 0 ? [...second.device.ports] : [],
+        });
+        if (second.match === 'exact') exact += 1;
+        else fuzzy += 1;
+      } else {
+        existing.heightInU = Math.max(existing.heightInU, u.heightInU);
+        if (u.physicalHeightInches && u.physicalHeightInches > 0) {
+          existing.physicalHeightInches = Math.max(
+            existing.physicalHeightInches ?? 0,
+            u.physicalHeightInches,
+          );
+        }
+        existing.deviceWidthInches = Math.max(existing.deviceWidthInches ?? 0, u.deviceWidthInches);
+        existing.deviceDepthInches = Math.max(existing.deviceDepthInches ?? 0, u.deviceDepthInches);
+        if (u.sheetPower?.trim()) {
+          existing.sheetPower = [existing.sheetPower, u.sheetPower].filter(Boolean).join(' · ') || undefined;
+        }
+      }
+    } else {
+      finalUnmatched.push(u);
+    }
+  }
+
   return {
     matchedDevices: [...matchedMap.values()],
-    unmatchedItems: unmatchedList,
+    unmatchedItems: finalUnmatched,
     summary: {
       exact,
       fuzzy,
-      unmatched: unmatchedList.length,
-      unmatchedNames: unmatchedList.map((u) => u.name),
+      unmatched: finalUnmatched.length,
+      unmatchedNames: finalUnmatched.map((u) => u.name),
     },
   };
 }
@@ -221,16 +266,19 @@ Unlisted part number XYZ,Interface,2`;
 
     const fileExtension = file.name.split('.').pop()?.toLowerCase();
 
-    const runWithPool = (
+    const runWithPool = async (
       fn: (pool: ReturnType<typeof mergeBuiltInAndCustomDevices>, dbCats: string[]) => void,
     ) => {
-      void Promise.all([prefetchServerCatalogDevices(), prefetchDeviceCategories()]).finally(() => {
-        fn(mergeBuiltInAndCustomDevices(), getDeviceCategoryNames());
-      });
+      try {
+        await Promise.all([prefetchServerCatalogDevices(), prefetchDeviceCategories()]);
+      } catch {
+        /* offline: still import with built-in + cached catalog if any */
+      }
+      fn(mergeBuiltInAndCustomDevices(), getDeviceCategoryNames());
     };
 
     if (fileExtension === 'xml') {
-      runWithPool((pool, dbCats) => {
+      void runWithPool((pool, dbCats) => {
         void extractCandidatesFromXmlFile(file)
           .then((raw) => emitImport(raw, pool, batchId, dbCats))
           .catch((err) => {
@@ -245,15 +293,17 @@ Unlisted part number XYZ,Interface,2`;
       return;
     }
 
-    runWithPool((pool, dbCats) => {
+    void runWithPool((pool, dbCats) => {
     Papa.parse(file, {
       header: true,
       skipEmptyLines: true,
       worker: false,
-      transformHeader: (header) => header.trim(),
+      transformHeader: (header) => header.replace(/^\uFEFF/, '').trim(),
       complete: (results) => {
         try {
-          const fields = results.meta.fields?.filter(Boolean) ?? [];
+          const fields = (results.meta.fields?.filter(Boolean) ?? []).map((f) =>
+            String(f).replace(/^\uFEFF/, '').trim(),
+          );
           const rows = (results.data as Record<string, unknown>[]).filter(
             (r) => r && typeof r === 'object',
           );
