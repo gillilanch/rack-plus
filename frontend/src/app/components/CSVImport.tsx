@@ -4,8 +4,8 @@ import Papa from 'papaparse';
 import {
   buildDeviceExactLookup,
   mergeBuiltInAndCustomDevices,
+  resolveCsvImportRowToCatalogDevice,
   resolveImportCategory,
-  resolvePartsNameToCatalogDevice,
 } from '../utils/deviceCatalogSearch';
 import { prefetchServerCatalogDevices } from '../utils/serverCatalogCache';
 import { getDeviceCategoryNames, prefetchDeviceCategories } from '../utils/deviceCategoryCache';
@@ -74,7 +74,7 @@ function partitionCandidates(
   let uIdx = 0;
 
   for (const c of candidates) {
-    const resolved = resolvePartsNameToCatalogDevice(c.text, pool, exactLookup);
+    const resolved = resolveCsvImportRowToCatalogDevice(c, pool, exactLookup);
     if (resolved) {
       const key = c.text.trim().toLowerCase();
       const existing = matchedMap.get(key);

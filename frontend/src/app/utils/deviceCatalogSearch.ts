@@ -100,6 +100,57 @@ export function buildDeviceExactLookup(pool: Device[]): Map<string, Device> {
   return idx;
 }
 
+/** Collapse spaces/hyphens for tolerant model line matching (PXW-FX9 vs PXW FX9). */
+function normalizeMfrModelToken(s: string): string {
+  return s.trim().toLowerCase().replace(/[\s\-_.]+/g, '');
+}
+
+/**
+ * When CSV display text does not fuzzy-match, still link rows that match catalog manufacturer+model
+ * (handles hyphen/spacing differences vs AVCAD / server catalog).
+ */
+export function findDeviceByManufacturerModelLoose(manufacturer: string, model: string, pool: Device[]): Device | null {
+  const m = manufacturer.trim();
+  const md = model.trim();
+  if (!m || !md) return null;
+  const mL = m.toLowerCase();
+  const mdL = md.toLowerCase();
+  const nM = normalizeMfrModelToken(m);
+  const nMd = normalizeMfrModelToken(md);
+  for (const d of pool) {
+    const dm = (d.manufacturer ?? '').trim();
+    const dmd = (d.model ?? '').trim();
+    if (!dm || !dmd) continue;
+    if (dm.toLowerCase() === mL && dmd.toLowerCase() === mdL) return d;
+    if (normalizeMfrModelToken(dm) === nM && normalizeMfrModelToken(dmd) === nMd) return d;
+  }
+  return null;
+}
+
+/**
+ * CSV row → catalog device: match on full label first, then manufacturer+model (strict/loose).
+ */
+export function resolveCsvImportRowToCatalogDevice(
+  c: { text: string; manufacturer?: string; model?: string },
+  pool: Device[],
+  exactLookup: Map<string, Device>,
+): { device: Device; match: 'exact' | 'fuzzy' } | null {
+  const textNorm = c.text.trim().replace(/\s+/g, ' ');
+  let r = resolvePartsNameToCatalogDevice(textNorm, pool, exactLookup);
+  if (r) return r;
+
+  const mfr = c.manufacturer?.trim();
+  const mdl = c.model?.trim();
+  if (mfr && mdl) {
+    const loose = findDeviceByManufacturerModelLoose(mfr, mdl, pool);
+    if (loose) return { device: loose, match: 'exact' };
+    const combined = `${mfr} ${mdl}`.replace(/\s+/g, ' ');
+    r = resolvePartsNameToCatalogDevice(combined, pool, exactLookup);
+    if (r) return r;
+  }
+  return null;
+}
+
 /**
  * Map a parts-list / CSV row name to a built-in or Fox device when confident enough.
  * Uses exact name first, then the same ranking as manual-add autocomplete with a fuzzy floor

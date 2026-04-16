@@ -195,8 +195,34 @@ function getNameFieldKey(fields: string[]): string | undefined {
 
 /** Combined manufacturer + model when both present (trimmed). */
 function readManufacturerModelFromRow(row: Record<string, unknown>): { combined: string; mfr: string; mdl: string } | null {
-  const mKeys = ['manufacturer', 'Manufacturer', 'deviceManufacturer', 'mfr', 'make', 'Make'];
-  const modelKeys = ['model', 'Model', 'modelNumber', 'model_number', 'deviceModel', 'device_model'];
+  const mKeys = [
+    'manufacturer',
+    'Manufacturer',
+    'deviceManufacturer',
+    'mfr',
+    'make',
+    'Make',
+    'brand',
+    'Brand',
+    'oem',
+    'OEM',
+    'vendor',
+    'Vendor',
+  ];
+  const modelKeys = [
+    'model',
+    'Model',
+    'modelNumber',
+    'model_number',
+    'deviceModel',
+    'device_model',
+    'partNumber',
+    'part_number',
+    'Part Number',
+    'part number',
+    'sku',
+    'SKU',
+  ];
   let manufacturer = '';
   let model = '';
   for (const k of mKeys) {
