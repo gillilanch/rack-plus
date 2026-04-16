@@ -69,7 +69,13 @@ app.use('/admin', adminRouter);
 
 function scheduleFoxCatalogSync(): void {
   const ms = Number(process.env.FOX_CATALOG_SYNC_INTERVAL_MS ?? 0);
-  if (!Number.isFinite(ms) || ms < MIN_CATALOG_SYNC_INTERVAL_MS) return;
+  if (!Number.isFinite(ms) || ms <= 0) return;
+  if (ms < MIN_CATALOG_SYNC_INTERVAL_MS) {
+    console.warn(
+      `[catalog] FOX_CATALOG_SYNC_INTERVAL_MS=${ms} is below minimum ${MIN_CATALOG_SYNC_INTERVAL_MS}ms; scheduled CSV/sheet sync disabled.`,
+    );
+    return;
+  }
   const prune = catalogPruneMissingFromEnv();
   const tick = async () => {
     try {
