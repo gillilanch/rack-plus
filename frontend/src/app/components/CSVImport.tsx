@@ -167,8 +167,14 @@ function partitionCandidates(
             u.physicalHeightInches,
           );
         }
-        existing.deviceWidthInches = Math.max(existing.deviceWidthInches ?? 0, u.deviceWidthInches);
-        existing.deviceDepthInches = Math.max(existing.deviceDepthInches ?? 0, u.deviceDepthInches);
+        existing.deviceWidthInches = Math.max(
+          existing.deviceWidthInches ?? 0,
+          u.deviceWidthInches ?? 0,
+        );
+        existing.deviceDepthInches = Math.max(
+          existing.deviceDepthInches ?? 0,
+          u.deviceDepthInches ?? 0,
+        );
         if (u.sheetPower?.trim()) {
           existing.sheetPower = [existing.sheetPower, u.sheetPower].filter(Boolean).join(' · ') || undefined;
         }

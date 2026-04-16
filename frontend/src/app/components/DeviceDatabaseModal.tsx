@@ -27,6 +27,11 @@ import {
 import { FOX_EMPLOYEES_CHANGED_EVENT, mergeFoxEmployeeLists } from '../utils/foxEmployeeExtras';
 import { AddDeviceModal } from './AddDeviceModal';
 import { getDeviceDisplayName, getDeviceSearchBlob } from '../utils/deviceDisplay';
+import {
+  FOX_SERVER_CATALOG_CHANGED_EVENT,
+  getServerCatalogDevices,
+  prefetchServerCatalogDevices,
+} from '../utils/serverCatalogCache';
 
 interface DeviceDatabaseModalProps {
   isOpen: boolean;
@@ -71,6 +76,10 @@ export function DeviceDatabaseModal({ isOpen, onClose }: DeviceDatabaseModalProp
   const [newEmployeeName, setNewEmployeeName] = useState('');
   const [newEmployeeError, setNewEmployeeError] = useState<string | null>(null);
 
+  const [serverCatalog, setServerCatalog] = useState<Device[]>([]);
+  const [serverCatalogLoading, setServerCatalogLoading] = useState(false);
+  const [serverCatalogError, setServerCatalogError] = useState<string | null>(null);
+
   const refreshCustom = useCallback(() => setCustom(getCustomDevices()), []);
 
   const loadEmployeeCatalog = useCallback(async () => {
@@ -100,8 +109,40 @@ export function DeviceDatabaseModal({ isOpen, onClose }: DeviceDatabaseModalProp
 
   useEffect(() => {
     if (!isOpen) return;
+    let cancelled = false;
+    setServerCatalogLoading(true);
+    setServerCatalogError(null);
+    void prefetchServerCatalogDevices().then((ok) => {
+      if (cancelled) return;
+      setServerCatalogLoading(false);
+      const devices = getServerCatalogDevices();
+      setServerCatalog(devices);
+      if (!ok) {
+        setServerCatalogError(
+          devices.length === 0
+            ? 'Could not load the AVCAD catalog from this server. If the UI runs on another origin than the API, set VITE_API_BASE_URL to your backend (e.g. http://127.0.0.1:4000).'
+            : 'Could not refresh the catalog from the server; showing the last loaded list.',
+        );
+      } else {
+        setServerCatalogError(null);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
     void loadEmployeeCatalog();
   }, [isOpen, loadEmployeeCatalog]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const fn = () => setServerCatalog(getServerCatalogDevices());
+    window.addEventListener(FOX_SERVER_CATALOG_CHANGED_EVENT, fn);
+    return () => window.removeEventListener(FOX_SERVER_CATALOG_CHANGED_EVENT, fn);
+  }, [isOpen]);
 
   useEffect(() => {
     const fn = () => refreshCustom();
@@ -116,6 +157,11 @@ export function DeviceDatabaseModal({ isOpen, onClose }: DeviceDatabaseModalProp
     window.addEventListener(FOX_EMPLOYEES_CHANGED_EVENT, fn);
     return () => window.removeEventListener(FOX_EMPLOYEES_CHANGED_EVENT, fn);
   }, [loadEmployeeCatalog]);
+
+  const filteredServerCatalog = useMemo(
+    () => serverCatalog.filter((d) => matchesSearch(d, search)),
+    [serverCatalog, search],
+  );
 
   const filteredCustom = useMemo(
     () => custom.filter((d) => matchesSearch(d, search)),
@@ -140,8 +186,9 @@ export function DeviceDatabaseModal({ isOpen, onClose }: DeviceDatabaseModalProp
   const existingNamesForForm = useMemo(() => {
     const fromBuiltIn = builtInDevices.map((d) => getDeviceDisplayName(d));
     const fromCustom = custom.filter((d) => d.id !== editingDevice?.id).map((d) => getDeviceDisplayName(d));
-    return [...fromBuiltIn, ...fromCustom];
-  }, [custom, editingDevice?.id]);
+    const fromServer = serverCatalog.map((d) => getDeviceDisplayName(d));
+    return [...fromBuiltIn, ...fromCustom, ...fromServer];
+  }, [custom, editingDevice?.id, serverCatalog]);
 
   const toggleExpand = (id: string) => {
     setExpandedIds((prev) => {
@@ -247,10 +294,10 @@ export function DeviceDatabaseModal({ isOpen, onClose }: DeviceDatabaseModalProp
           </div>
 
           <p className="border-b border-gray-100 px-5 py-3 text-sm text-gray-600">
-            <span className="font-medium">Fox equipment</span> is stored in this browser and powers manual add
-            autocomplete and cable suggestions. <span className="font-medium">Fox employees</span> lists the
-            directory from this server plus names added here, stored on this server for everyone (also used when
-            saving a rack).
+            <span className="font-medium">AVCAD catalog</span> is the equipment list synced to this server (Google
+            Sheet webhook or CSV). <span className="font-medium">Your equipment</span> is extra devices saved in this
+            browser for autocomplete and cable suggestions. <span className="font-medium">Fox employees</span> lists
+            the directory from this server plus names added here (also used when saving a rack).
           </p>
 
           <div className="flex gap-1 border-b border-gray-200 px-5 pt-3">
@@ -263,7 +310,7 @@ export function DeviceDatabaseModal({ isOpen, onClose }: DeviceDatabaseModalProp
                   : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
               }`}
             >
-              Fox equipment ({custom.length})
+              Equipment ({serverCatalog.length} server · {custom.length} local)
             </button>
             <button
               type="button"
@@ -287,7 +334,7 @@ export function DeviceDatabaseModal({ isOpen, onClose }: DeviceDatabaseModalProp
                   type="search"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search Fox equipment by name, category, or connector…"
+                  placeholder="Search catalog and your equipment by name, category, or connector…"
                   className="w-full rounded-lg border border-gray-300 py-2 pl-10 pr-3 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
@@ -341,32 +388,79 @@ export function DeviceDatabaseModal({ isOpen, onClose }: DeviceDatabaseModalProp
 
           <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
             {tab === 'equipment' && (
-              <div className="space-y-3">
-                <button
-                  type="button"
-                  onClick={openAdd}
-                  className="flex w-full items-center justify-center gap-2 rounded-lg border-2 border-dashed border-blue-300 bg-blue-50/50 py-3 text-sm font-medium text-blue-800 hover:bg-blue-50"
-                >
-                  <Plus className="size-4" />
-                  Add device to Fox equipment
-                </button>
+              <div className="space-y-6">
+                <section>
+                  <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-gray-500">
+                    AVCAD catalog (this server)
+                  </h3>
+                  {serverCatalogLoading && (
+                    <p className="text-sm text-gray-500">Loading catalog from server…</p>
+                  )}
+                  {serverCatalogError && (
+                    <p className="mb-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                      {serverCatalogError}
+                    </p>
+                  )}
+                  {!serverCatalogLoading && !serverCatalogError && serverCatalog.length === 0 && (
+                    <p className="text-sm text-gray-500">
+                      No devices in Postgres yet. Push the sheet with your Apps Script webhook, or load a CSV on the
+                      server, then open this dialog again.
+                    </p>
+                  )}
+                  {!serverCatalogLoading &&
+                    serverCatalog.length > 0 &&
+                    filteredServerCatalog.length === 0 && (
+                      <p className="text-sm text-gray-500">No catalog rows match your search.</p>
+                    )}
+                  <ul className="space-y-3">
+                    {filteredServerCatalog.map((d) => (
+                      <DeviceDbRow
+                        key={`srv:${d.id}`}
+                        device={d}
+                        expanded={expandedIds.has(`srv:${d.id}`)}
+                        onToggle={() => toggleExpand(`srv:${d.id}`)}
+                        variantLabel="Server catalog"
+                        badgeTone="emerald"
+                      />
+                    ))}
+                  </ul>
+                </section>
 
-                {filteredCustom.length === 0 && (
-                  <p className="py-8 text-center text-sm text-gray-500">
-                    {search.trim() ? 'No Fox equipment matches your search.' : 'No Fox equipment saved yet.'}
-                  </p>
-                )}
+                <section>
+                  <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-gray-500">
+                    Your equipment (this browser)
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={openAdd}
+                    className="mb-3 flex w-full items-center justify-center gap-2 rounded-lg border-2 border-dashed border-blue-300 bg-blue-50/50 py-3 text-sm font-medium text-blue-800 hover:bg-blue-50"
+                  >
+                    <Plus className="size-4" />
+                    Add device to your equipment
+                  </button>
 
-                {filteredCustom.map((d) => (
-                  <DeviceDbRow
-                    key={d.id}
-                    device={d}
-                    expanded={expandedIds.has(d.id)}
-                    onToggle={() => toggleExpand(d.id)}
-                    onEdit={() => openEdit(d)}
-                    onDelete={() => handleDelete(d)}
-                  />
-                ))}
+                  {filteredCustom.length === 0 && (
+                    <p className="py-4 text-center text-sm text-gray-500">
+                      {search.trim()
+                        ? 'No saved equipment matches your search.'
+                        : 'No extra devices saved in this browser yet.'}
+                    </p>
+                  )}
+
+                  {filteredCustom.map((d) => (
+                    <div key={d.id} className="mb-3">
+                      <DeviceDbRow
+                        device={d}
+                        expanded={expandedIds.has(d.id)}
+                        onToggle={() => toggleExpand(d.id)}
+                        onEdit={() => openEdit(d)}
+                        onDelete={() => handleDelete(d)}
+                        variantLabel="Fox equipment"
+                        badgeTone="amber"
+                      />
+                    </div>
+                  ))}
+                </section>
               </div>
             )}
 
@@ -465,13 +559,21 @@ function DeviceDbRow({
   onToggle,
   onEdit,
   onDelete,
+  variantLabel = 'Fox equipment',
+  badgeTone = 'amber',
 }: {
   device: Device;
   expanded: boolean;
   onToggle: () => void;
   onEdit?: () => void;
   onDelete?: () => void;
+  variantLabel?: string;
+  badgeTone?: 'amber' | 'emerald';
 }) {
+  const badgeClass =
+    badgeTone === 'emerald'
+      ? 'bg-emerald-100 text-emerald-900'
+      : 'bg-amber-100 text-amber-800';
   return (
     <div className="rounded-lg border border-gray-200 bg-white shadow-sm">
       <div className="flex items-center gap-2 p-3">
@@ -489,8 +591,8 @@ function DeviceDbRow({
             {device.heightInU != null ? `${device.heightInU}U` : '1U'} ·{' '}
             {device.deviceWidthInches != null ? `${device.deviceWidthInches}"` : '19"'} · {device.category} ·{' '}
             {device.ports.length} port{device.ports.length !== 1 ? 's' : ''}
-            <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-amber-800">
-              Fox equipment
+            <span className={`ml-2 rounded px-1.5 py-0.5 text-[10px] font-medium uppercase ${badgeClass}`}>
+              {variantLabel}
             </span>
           </div>
         </div>

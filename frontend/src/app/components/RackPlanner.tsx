@@ -1,6 +1,6 @@
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useBlocker } from 'react-router';
-import type { Blocker } from 'react-router';
+import type { Blocker, BlockerFunction } from 'react-router';
 import { toPng } from 'html-to-image';
 import { DndProvider } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
@@ -354,11 +354,13 @@ export function RackPlanner({
   const [serverCatalogTick, setServerCatalogTick] = useState(0);
 
   useEffect(() => {
-    void prefetchServerCatalogDevices().then(() => setServerCatalogTick((n) => n + 1));
+    void prefetchServerCatalogDevices().then((ok) => {
+      if (ok) setServerCatalogTick((n) => n + 1);
+    });
   }, []);
 
   const blocker = useBlocker(
-    useCallback(
+    useCallback<BlockerFunction>(
       ({ currentLocation, nextLocation }) => {
         if (!rackDirty || loadState !== 'ready') return false;
         if (currentLocation.pathname !== '/rack') return false;

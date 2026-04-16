@@ -212,11 +212,9 @@ export function EditExistingRackPage() {
                       <div className="min-w-0 flex-1">
                         <h3 className="flex items-center gap-2 text-xl font-black text-slate-100 transition-colors group-hover:text-[#f87171]">
                           {rack.savedByVerified && (
-                            <BadgeCheck
-                              className="size-7 shrink-0 text-sky-400"
-                              aria-label="Verified save"
-                              title="Verified Fox employee save"
-                            />
+                            <span title="Verified Fox employee save" className="inline-flex shrink-0">
+                              <BadgeCheck className="size-7 text-sky-400" aria-label="Verified save" />
+                            </span>
                           )}
                           <span>{rack.name}</span>
                         </h3>

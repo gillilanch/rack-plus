@@ -94,9 +94,9 @@ function createConnectionsBetweenDevices(
         fromPort,
         toDeviceId,
         toPort,
-        cableType: bestSolution.cables[0] || fromPort.type,
+        cableType: bestSolution.cable?.name ?? fromPort.type,
         estimatedLength,
-        adapters: bestSolution.adapters,
+        adapters: bestSolution.adapters?.map((a) => a.name),
       });
     }
   });

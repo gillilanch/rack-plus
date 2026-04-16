@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import express, { Router } from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
+import { prisma } from '../db/client';
 import { listCatalogDevicesJson } from '../repos/catalogDeviceRepo';
 import { syncCatalogFromCsvText, syncCatalogFromStructuredRows } from '../services/catalogSync';
 import { syncCatalogFromGoogleSheet } from '../services/googleSheetsCatalog';
@@ -33,6 +34,20 @@ catalogRouter.get('/devices', async (_req, res, next) => {
     const rows = await listCatalogDevicesJson();
     res.setHeader('Cache-Control', 'public, max-age=30');
     res.json(rows);
+  } catch (e) {
+    next(e);
+  }
+});
+
+/**
+ * Quick health check for sync debugging: device count + whether webhook secret is set (no auth).
+ * Example: `curl -s http://127.0.0.1:4000/api/catalog/status`
+ */
+catalogRouter.get('/status', async (_req, res, next) => {
+  try {
+    const catalogDeviceCount = await prisma.catalogDevice.count();
+    const webhookSecretConfigured = Boolean(process.env.CATALOG_WEBHOOK_SECRET?.trim());
+    res.json({ ok: true, catalogDeviceCount, webhookSecretConfigured });
   } catch (e) {
     next(e);
   }

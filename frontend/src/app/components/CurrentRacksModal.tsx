@@ -81,11 +81,12 @@ export function CurrentRacksModal({ isOpen, onClose, currentRackId, onOpenRack }
                       <div className="min-w-0 flex-1">
                         <div className="flex min-w-0 items-center gap-1.5 truncate font-medium text-gray-900">
                           {r.savedByVerified && (
-                            <BadgeCheck
-                              className="size-5 shrink-0 text-[#003366]"
-                              aria-label="Verified save"
-                              title="Verified Fox employee save"
-                            />
+                            <span title="Verified Fox employee save" className="inline-flex shrink-0">
+                              <BadgeCheck
+                                className="size-5 text-[#003366]"
+                                aria-label="Verified save"
+                              />
+                            </span>
                           )}
                           <span className="truncate">
                             {r.name}

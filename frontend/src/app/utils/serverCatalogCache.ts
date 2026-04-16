@@ -1,8 +1,11 @@
 import type { Device, Port } from '../data/equipment';
 import { apiUrl } from '../api/apiUrl';
 
+/** Fired after a successful refresh of the Postgres-backed AVCAD catalog (same tab). */
+export const FOX_SERVER_CATALOG_CHANGED_EVENT = 'rack-plus-server-catalog-changed';
+
 let cached: Device[] = [];
-let inflight: Promise<void> | undefined;
+let inflight: Promise<boolean> | undefined;
 
 const CONNECTOR_TYPES = new Set<string>([
   'HDMI',
@@ -70,15 +73,18 @@ export function getServerCatalogDevices(): Device[] {
   return cached;
 }
 
-/** Load AVCAD / Fox sheet catalog from Postgres (via backend). Safe to call repeatedly. */
-export async function prefetchServerCatalogDevices(): Promise<void> {
+/**
+ * Load AVCAD / Fox sheet catalog from Postgres (via backend). Safe to call repeatedly.
+ * @returns true if the HTTP response was OK and the body parsed as an array (may be empty).
+ */
+export async function prefetchServerCatalogDevices(): Promise<boolean> {
   if (inflight) return inflight;
-  const p = (async () => {
+  const p = (async (): Promise<boolean> => {
     try {
       const r = await fetch(apiUrl('/api/catalog/devices'));
-      if (!r.ok) return;
+      if (!r.ok) return false;
       const raw = (await r.json()) as unknown;
-      if (!Array.isArray(raw)) return;
+      if (!Array.isArray(raw)) return false;
       const next: Device[] = [];
       for (const item of raw) {
         if (item && typeof item === 'object') {
@@ -87,13 +93,17 @@ export async function prefetchServerCatalogDevices(): Promise<void> {
         }
       }
       cached = next;
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent(FOX_SERVER_CATALOG_CHANGED_EVENT));
+      }
+      return true;
     } catch {
-      /* offline or CORS */
+      return false;
     }
   })();
   inflight = p;
   try {
-    await p;
+    return await p;
   } finally {
     inflight = undefined;
   }

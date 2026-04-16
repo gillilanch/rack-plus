@@ -48,7 +48,14 @@ if (!isProduction) {
 app.get('/health', async (_req, res, next) => {
   try {
     await prisma.$queryRaw`SELECT 1`;
-    res.json({ ok: true });
+    let catalogDeviceCount: number | null = null;
+    try {
+      catalogDeviceCount = await prisma.catalogDevice.count();
+    } catch {
+      /* migration not applied or table missing */
+    }
+    const webhookSecretConfigured = Boolean(process.env.CATALOG_WEBHOOK_SECRET?.trim());
+    res.json({ ok: true, catalogDeviceCount, webhookSecretConfigured });
   } catch (e) {
     next(e);
   }
