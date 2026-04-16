@@ -5,10 +5,14 @@ import {
   connectionFromSuggestedPair,
   findFirstUnusedMatchingPortPair,
   hasDirectedPortConnection,
+  type BuildManualConnectionVisualRoute,
 } from '../utils/rackConnectionHelpers';
 import {
+  cableRunInchesBetweenAnchors,
   cableRunInchesFromPixelAnchors,
-  dragLengthToDisplayInches,
+  dragCableRunDisplayInches,
+  formatCableLengthInches,
+  roundCableLengthInches,
 } from '../utils/rackCableMetrics';
 import type { RackConnection, RackDevice } from '../types/rack';
 import { deviceFaceHorizontalSpanPx } from '../utils/rackDevicePlacement';
@@ -309,7 +313,13 @@ interface RackCableOverlayProps {
   inchesPerRU: number;
   slackAllowanceFeet: number;
   onAddConnection: (c: RackConnection) => void;
-  onPortMismatch: (payload: { from: RackDevice; to: RackDevice; extraSlackInches: number }) => void;
+  onPortMismatch: (payload: {
+    from: RackDevice;
+    to: RackDevice;
+    extraSlackInches: number;
+    /** Captures drag geometry so the connection matches the user's cable path after port setup. */
+    buildVisualRoute: BuildManualConnectionVisualRoute;
+  }) => void;
   onRemoveConnection?: (connectionId: string) => void;
 }
 
@@ -423,13 +433,78 @@ export function RackCableOverlay({
         from.id,
       );
 
-      const pixelLen = Math.hypot(d.curX - d.startX, d.curY - d.startY);
-      const extraSlack = Math.max(0, dragLengthToDisplayInches(pixelLen, unitHeightPx, inchesPerRU));
+      const slackInches = slackAllowanceFeet * 12;
+      const dragGeomInches = cableRunInchesBetweenAnchors(
+        d.startX,
+        d.startY,
+        d.curX,
+        d.curY,
+        unitHeightPx,
+        inchesPerRU,
+        rackWidthPx,
+        rackWidthInches,
+      );
+      const dragNeedInches = roundCableLengthInches(dragGeomInches + slackInches);
+      const extraSlack = Math.max(0, dragCableRunDisplayInches({
+        x1: d.startX,
+        y1: d.startY,
+        x2: d.curX,
+        y2: d.curY,
+        unitHeightPx,
+        inchesPerRU,
+        rackWidthPx,
+        rackWidthInches,
+      }));
 
       if (to) {
         const m = findFirstUnusedMatchingPortPair(from, to, connections);
         if (!m) {
-          onPortMismatch({ from, to, extraSlackInches: extraSlack });
+          const dSnap = { ...d };
+          const rackW = rackWidthPx;
+          const th = totalHeight;
+          const uPy = unitHeightPx;
+          const dragFromId = from.id;
+          const dragToId = to.id;
+          const buildVisualRoute: BuildManualConnectionVisualRoute = (m2, devFrom, devTo) => {
+            const targetEdge = inferToEdgeFromDrag(dSnap, rackW);
+            return {
+              fromEdge: edgeForConnectionDeviceEnd(
+                m2.fromDeviceId,
+                dragFromId,
+                dragToId,
+                dSnap.fromEdge,
+                targetEdge,
+              ),
+              toEdge: edgeForConnectionDeviceEnd(
+                m2.toDeviceId,
+                dragFromId,
+                dragToId,
+                dSnap.fromEdge,
+                targetEdge,
+              ),
+              fromYRatio: yRatioForConnectionDeviceEnd(
+                m2.fromDeviceId,
+                dragFromId,
+                dragToId,
+                dSnap.startY,
+                dSnap.curY,
+                devFrom,
+                th,
+                uPy,
+              ),
+              toYRatio: yRatioForConnectionDeviceEnd(
+                m2.toDeviceId,
+                dragFromId,
+                dragToId,
+                dSnap.startY,
+                dSnap.curY,
+                devTo,
+                th,
+                uPy,
+              ),
+            };
+          };
+          onPortMismatch({ from, to, extraSlackInches: extraSlack, buildVisualRoute });
         } else {
           const devFrom = byId.get(m.fromDeviceId);
           const devTo = byId.get(m.toDeviceId);
@@ -469,6 +544,34 @@ export function RackCableOverlay({
               d.fromEdge,
               targetEdge,
             );
+            const route = {
+              routeFromEdge,
+              routeToEdge,
+              routeFromYRatio: fromYRatio,
+              routeToYRatio: toYRatio,
+            };
+            const base = connectionAnchorPoints(
+              devFrom,
+              devTo,
+              totalHeight,
+              unitHeightPx,
+              rackWidthPx,
+              rackWidthInches,
+              route,
+            );
+            const anchorGeomInches = cableRunInchesBetweenAnchors(
+              base.x1,
+              base.y1,
+              base.x2,
+              base.y2,
+              unitHeightPx,
+              inchesPerRU,
+              rackWidthPx,
+              rackWidthInches,
+            );
+            const baseNeedInches = roundCableLengthInches(anchorGeomInches + slackInches);
+            const totalMinInches = roundCableLengthInches(Math.max(baseNeedInches, dragNeedInches));
+            const extraBeyondAnchor = roundCableLengthInches(Math.max(0, totalMinInches - baseNeedInches));
             const conn = connectionFromManualPorts(
               devFrom,
               devTo,
@@ -476,13 +579,14 @@ export function RackCableOverlay({
               m.toPort,
               inchesPerRU,
               slackAllowanceFeet,
-              extraSlack,
+              extraBeyondAnchor,
               {
                 fromEdge: routeFromEdge,
                 toEdge: routeToEdge,
                 fromYRatio,
                 toYRatio,
               },
+              totalMinInches,
             );
             onAddConnection(conn);
           }
@@ -496,6 +600,7 @@ export function RackCableOverlay({
       totalHeight,
       unitHeightPx,
       rackWidthPx,
+      rackWidthInches,
       rackHeightPx,
       inchesPerRU,
       slackAllowanceFeet,
@@ -616,17 +721,21 @@ export function RackCableOverlay({
           }
           const dPath = cableSvgPath(x1, y1, x2, y2);
           const stroke = c.cableStyle === 'manual' ? '#111827' : '#2563eb';
-          const min = cableRunInchesFromPixelAnchors(
-            base.x1,
-            base.y1,
-            base.x2,
-            base.y2,
-            unitHeightPx,
-            inchesPerRU,
-            slackAllowanceFeet,
-            c.extraSlackInches ?? 0,
-          );
-          const label = `>${min}"`;
+          const min =
+            c.minCableLengthInches ??
+            cableRunInchesFromPixelAnchors(
+              base.x1,
+              base.y1,
+              base.x2,
+              base.y2,
+              unitHeightPx,
+              inchesPerRU,
+              slackAllowanceFeet,
+              c.extraSlackInches ?? 0,
+              rackWidthPx,
+              rackWidthInches,
+            );
+          const label = `>${formatCableLengthInches(min)}"`;
           const fromEdge = c.routeFromEdge ?? 'right';
           const toEdge = c.routeToEdge ?? 'left';
           const midX = (x1 + x2) / 2;
@@ -636,8 +745,8 @@ export function RackCableOverlay({
               <path d={dPath} fill="none" stroke={stroke} strokeWidth={c.cableStyle === 'manual' ? 1.5 : 2} opacity={0.92} style={{ pointerEvents: 'none' }} />
               {portSocketCircle(x1, y1, fromEdge)}
               {portSocketCircle(x2, y2, toEdge)}
-              <circle cx={x1} cy={y1} r={5.5} fill="white" stroke={stroke} strokeWidth={1.75} style={{ pointerEvents: 'none' }} />
-              <circle cx={x2} cy={y2} r={5.5} fill="white" stroke={stroke} strokeWidth={1.75} style={{ pointerEvents: 'none' }} />
+              <circle cx={x1} cy={y1} r={5.5} fill="#cbd5e1" stroke={stroke} strokeWidth={1.75} style={{ pointerEvents: 'none' }} />
+              <circle cx={x2} cy={y2} r={5.5} fill="#cbd5e1" stroke={stroke} strokeWidth={1.75} style={{ pointerEvents: 'none' }} />
               <text
                 x={midX}
                 y={midY}
@@ -684,10 +793,17 @@ export function RackCableOverlay({
             top: Math.max(4, drag.curY - 20),
           }}
         >
-          {dragLengthToDisplayInches(
-            Math.hypot(drag.curX - drag.startX, drag.curY - drag.startY),
-            unitHeightPx,
-            inchesPerRU,
+          {formatCableLengthInches(
+            cableRunInchesBetweenAnchors(
+              drag.startX,
+              drag.startY,
+              drag.curX,
+              drag.curY,
+              unitHeightPx,
+              inchesPerRU,
+              rackWidthPx,
+              rackWidthInches,
+            ) + slackAllowanceFeet * 12,
           )}
           &quot;
         </div>

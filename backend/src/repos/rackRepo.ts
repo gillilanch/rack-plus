@@ -4,7 +4,7 @@ import { resolveAttribution } from '../data/foxEmployees';
 import { buildNestedDevices, toRackConfiguration, type RackWithDevices } from '../mappers/rack';
 import type { CreateRackBody, UpdateRackBody } from '../types/rackApi';
 
-function attributionFromBody(body: CreateRackBody | UpdateRackBody) {
+async function attributionFromBody(body: CreateRackBody | UpdateRackBody) {
   return resolveAttribution({
     saveAsGuest: body.saveAsGuest ?? false,
     savedByNameRaw: body.savedByNameRaw,
@@ -35,10 +35,18 @@ export async function listRacks() {
       name: true,
       totalHeightU: true,
       rackWidthInches: true,
+      rackDepthInches: true,
       updatedAt: true,
       savedByDisplayName: true,
       savedByVerified: true,
-      _count: { select: { devices: true } },
+      /** Placed on the rack only (excludes unassigned / pool devices). */
+      _count: {
+        select: {
+          devices: {
+            where: { rackPosition: { not: null } },
+          },
+        },
+      },
     },
   });
 }
@@ -54,7 +62,7 @@ export async function getRackById(id: string) {
 
 export async function createRack(body: CreateRackBody) {
   const nested = buildNestedDevices(body.devices);
-  const attr = attributionFromBody(body);
+  const attr = await attributionFromBody(body);
   const rack = await prisma.rack.create({
     data: {
       name: body.name.trim(),
@@ -63,6 +71,7 @@ export async function createRack(body: CreateRackBody) {
       totalHeightU: body.totalHeight,
       inchesPerRU: body.inchesPerRU,
       rackWidthInches: body.rackWidthInches,
+      rackDepthInches: body.rackDepthInches,
       slackAllowance: body.slackAllowance,
       connections: body.connections as unknown as Prisma.InputJsonValue,
       devices: {
@@ -89,7 +98,7 @@ export async function deleteAllRacks(): Promise<{ count: number }> {
 }
 
 export async function upsertRackFull(id: string, body: UpdateRackBody) {
-  const attr = attributionFromBody(body);
+  const attr = await attributionFromBody(body);
   await prisma.$transaction(async (tx) => {
     await tx.rack.update({
       where: { id },
@@ -100,6 +109,7 @@ export async function upsertRackFull(id: string, body: UpdateRackBody) {
         totalHeightU: body.totalHeight,
         inchesPerRU: body.inchesPerRU,
         rackWidthInches: body.rackWidthInches,
+        rackDepthInches: body.rackDepthInches,
         slackAllowance: body.slackAllowance,
         connections: body.connections as unknown as Prisma.InputJsonValue,
       },

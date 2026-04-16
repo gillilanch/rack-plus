@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { X, Loader2, CheckCircle2 } from 'lucide-react';
 import { listFoxEmployeesMerged } from '../api/employees';
 import type { RackSaveAttribution } from '../api/racks';
+import { FOX_EMPLOYEES_CHANGED_EVENT } from '../utils/foxEmployeeExtras';
 
 export type SaveRackMode = 'current' | 'new' | 'create';
 
@@ -51,6 +52,17 @@ export function SaveRackModal({
       cancelled = true;
     };
   }, [isOpen, initialRackName]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const reload = () => {
+      void listFoxEmployeesMerged()
+        .then((names) => setEmployees(names))
+        .catch(() => setEmployeesError('Could not load employee list; you can still type a name.'));
+    };
+    window.addEventListener(FOX_EMPLOYEES_CHANGED_EVENT, reload);
+    return () => window.removeEventListener(FOX_EMPLOYEES_CHANGED_EVENT, reload);
+  }, [isOpen]);
 
   const filteredEmployees = useMemo(() => {
     const q = savedBy.trim().toLowerCase();

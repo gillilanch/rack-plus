@@ -18,7 +18,7 @@ if [[ ! -f "$ROOT/frontend/dist/index.html" ]]; then
   exit 1
 fi
 
-PORT=4000
+PORT=4001
 if [[ -f "$ROOT/backend/.env" ]] && grep -q '^PORT=' "$ROOT/backend/.env"; then
   PORT="$(grep '^PORT=' "$ROOT/backend/.env" | head -1 | cut -d= -f2 | tr -d ' "'\''')"
 fi

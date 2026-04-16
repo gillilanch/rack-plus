@@ -7,15 +7,20 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   const apiPort = env.VITE_DEV_API_PORT || '4000';
 
+  const apiProxy = {
+    '/api': {
+      target: `http://127.0.0.1:${apiPort}`,
+      changeOrigin: true,
+    },
+  };
+
   return {
   plugins: [react(), tailwindcss()],
   server: {
-    proxy: {
-      '/api': {
-        target: `http://127.0.0.1:${apiPort}`,
-        changeOrigin: true,
-      },
-    },
+    proxy: apiProxy,
+  },
+  preview: {
+    proxy: apiProxy,
   },
   resolve: {
     alias: {

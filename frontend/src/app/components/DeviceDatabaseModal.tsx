@@ -12,7 +12,11 @@ import {
 } from 'lucide-react';
 import type { Device } from '../data/equipment';
 import { devices as builtInDevices } from '../data/equipment';
-import { listFoxEmployees } from '../api/employees';
+import {
+  addFoxEmployeeExtra,
+  fetchEmployeesCatalog,
+  removeFoxEmployeeExtra,
+} from '../api/employees';
 import {
   deleteCustomDevice,
   FOX_EQUIPMENT_CHANGED_EVENT,
@@ -20,13 +24,7 @@ import {
   saveCustomDevice,
   updateCustomDevice,
 } from '../utils/customDevices';
-import {
-  addFoxEmployeeExtra,
-  FOX_EMPLOYEES_CHANGED_EVENT,
-  getFoxEmployeeExtras,
-  mergeFoxEmployeeLists,
-  removeFoxEmployeeExtra,
-} from '../utils/foxEmployeeExtras';
+import { FOX_EMPLOYEES_CHANGED_EVENT, mergeFoxEmployeeLists } from '../utils/foxEmployeeExtras';
 import { AddDeviceModal } from './AddDeviceModal';
 import { getDeviceDisplayName, getDeviceSearchBlob } from '../utils/deviceDisplay';
 
@@ -74,7 +72,22 @@ export function DeviceDatabaseModal({ isOpen, onClose }: DeviceDatabaseModalProp
   const [newEmployeeError, setNewEmployeeError] = useState<string | null>(null);
 
   const refreshCustom = useCallback(() => setCustom(getCustomDevices()), []);
-  const refreshExtras = useCallback(() => setExtraNames(getFoxEmployeeExtras()), []);
+
+  const loadEmployeeCatalog = useCallback(async () => {
+    setDirectoryLoading(true);
+    setDirectoryError(null);
+    try {
+      const c = await fetchEmployeesCatalog();
+      setDirectoryNames(c.directory);
+      setExtraNames(c.extras);
+    } catch {
+      setDirectoryError('Could not load employees from this server.');
+      setDirectoryNames([]);
+      setExtraNames([]);
+    } finally {
+      setDirectoryLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -87,24 +100,8 @@ export function DeviceDatabaseModal({ isOpen, onClose }: DeviceDatabaseModalProp
 
   useEffect(() => {
     if (!isOpen) return;
-    let cancelled = false;
-    setDirectoryLoading(true);
-    setDirectoryError(null);
-    void listFoxEmployees()
-      .then((names) => {
-        if (!cancelled) setDirectoryNames(names);
-      })
-      .catch(() => {
-        if (!cancelled) setDirectoryError('Could not load the Fox directory from this server.');
-      })
-      .finally(() => {
-        if (!cancelled) setDirectoryLoading(false);
-      });
-    refreshExtras();
-    return () => {
-      cancelled = true;
-    };
-  }, [isOpen, refreshExtras]);
+    void loadEmployeeCatalog();
+  }, [isOpen, loadEmployeeCatalog]);
 
   useEffect(() => {
     const fn = () => refreshCustom();
@@ -113,10 +110,12 @@ export function DeviceDatabaseModal({ isOpen, onClose }: DeviceDatabaseModalProp
   }, [refreshCustom]);
 
   useEffect(() => {
-    const fn = () => refreshExtras();
+    const fn = () => {
+      void loadEmployeeCatalog();
+    };
     window.addEventListener(FOX_EMPLOYEES_CHANGED_EVENT, fn);
     return () => window.removeEventListener(FOX_EMPLOYEES_CHANGED_EVENT, fn);
-  }, [refreshExtras]);
+  }, [loadEmployeeCatalog]);
 
   const filteredCustom = useMemo(
     () => custom.filter((d) => matchesSearch(d, search)),
@@ -134,7 +133,7 @@ export function DeviceDatabaseModal({ isOpen, onClose }: DeviceDatabaseModalProp
   );
 
   const employeeUniqueCount = useMemo(
-    () => mergeFoxEmployeeLists(directoryNames).length,
+    () => mergeFoxEmployeeLists(directoryNames, extraNames).length,
     [directoryNames, extraNames],
   );
 
@@ -186,7 +185,7 @@ export function DeviceDatabaseModal({ isOpen, onClose }: DeviceDatabaseModalProp
     refreshCustom();
   };
 
-  const handleAddEmployee = () => {
+  const handleAddEmployee = async () => {
     setNewEmployeeError(null);
     const t = newEmployeeName.trim();
     if (!t) {
@@ -197,19 +196,20 @@ export function DeviceDatabaseModal({ isOpen, onClose }: DeviceDatabaseModalProp
       setNewEmployeeError('That name is already in the Fox directory on this server.');
       return;
     }
-    const r = addFoxEmployeeExtra(t);
+    const r = await addFoxEmployeeExtra(t);
     if (!r.ok) {
       setNewEmployeeError(r.reason);
       return;
     }
     setNewEmployeeName('');
-    refreshExtras();
+    await loadEmployeeCatalog();
   };
 
-  const handleRemoveExtra = (name: string) => {
-    if (!window.confirm(`Remove “${name}” from names added on this browser?`)) return;
-    removeFoxEmployeeExtra(name);
-    refreshExtras();
+  const handleRemoveExtra = async (name: string) => {
+    if (!window.confirm(`Remove “${name}” from names added on this server?`)) return;
+    const ok = await removeFoxEmployeeExtra(name);
+    if (ok) await loadEmployeeCatalog();
+    else window.alert('Could not remove that name. Try again.');
   };
 
   if (!isOpen) return null;
@@ -249,7 +249,8 @@ export function DeviceDatabaseModal({ isOpen, onClose }: DeviceDatabaseModalProp
           <p className="border-b border-gray-100 px-5 py-3 text-sm text-gray-600">
             <span className="font-medium">Fox equipment</span> is stored in this browser and powers manual add
             autocomplete and cable suggestions. <span className="font-medium">Fox employees</span> lists the
-            directory from this server plus any names you add locally (also used when saving a rack).
+            directory from this server plus names added here, stored on this server for everyone (also used when
+            saving a rack).
           </p>
 
           <div className="flex gap-1 border-b border-gray-200 px-5 pt-3">
@@ -298,7 +299,7 @@ export function DeviceDatabaseModal({ isOpen, onClose }: DeviceDatabaseModalProp
               <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
                 <div className="min-w-0 flex-1">
                   <label htmlFor="fox-emp-add" className="mb-1 block text-xs font-semibold uppercase text-gray-500">
-                    Add name (this browser)
+                    Add name (this server)
                   </label>
                   <input
                     id="fox-emp-add"
@@ -376,7 +377,7 @@ export function DeviceDatabaseModal({ isOpen, onClose }: DeviceDatabaseModalProp
                 )}
                 {directoryError && (
                   <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-                    {directoryError} You can still manage names added on this browser.
+                    {directoryError}
                   </p>
                 )}
 
@@ -405,7 +406,16 @@ export function DeviceDatabaseModal({ isOpen, onClose }: DeviceDatabaseModalProp
                 </section>
 
                 <section>
-                 
+                  <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-gray-500">
+                    Added on this server
+                  </h3>
+                  {!directoryLoading && filteredExtras.length === 0 && (
+                    <p className="text-sm text-gray-500">
+                      {employeeSearch.trim()
+                        ? 'No added names match your search.'
+                        : 'No extra names yet. Use the form above to add someone.'}
+                    </p>
+                  )}
                   <ul className="space-y-1">
                     {filteredExtras.map((name) => (
                       <li
@@ -415,13 +425,13 @@ export function DeviceDatabaseModal({ isOpen, onClose }: DeviceDatabaseModalProp
                         <span className="min-w-0 truncate font-medium text-gray-900">{name}</span>
                         <div className="flex shrink-0 items-center gap-2">
                           <span className="rounded bg-white px-2 py-0.5 text-[10px] font-semibold uppercase text-amber-900 ring-1 ring-amber-200">
-                            Local
+                            Shared
                           </span>
                           <button
                             type="button"
-                            onClick={() => handleRemoveExtra(name)}
+                            onClick={() => void handleRemoveExtra(name)}
                             className="rounded p-1.5 text-red-600 hover:bg-red-50"
-                            title="Remove from this browser"
+                            title="Remove from this server"
                             aria-label={`Remove ${name}`}
                           >
                             <Trash2 className="size-4" />

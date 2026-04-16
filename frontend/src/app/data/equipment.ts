@@ -23,12 +23,21 @@ export interface Device {
   manufacturer?: string;
   /** Model name or number (searchable). */
   model?: string;
-  category: 'Camera' | 'Laptop' | 'Recording Deck' | 'Audio' | 'Monitor' | 'Interface';
+  /** Free-form (rack + custom gear); built-in rows still use familiar labels. */
+  category: string;
   ports: Port[];
   /** Default rack height (U) when adding from Fox/custom database (optional on built-in catalog). */
   heightInU?: number;
   /** Default front-panel width in inches when placed on the rack (optional). */
   deviceWidthInches?: number;
+  /** Face / equipment depth in inches (optional; Fox / custom DB + CSV add flow). */
+  deviceDepthInches?: number;
+  /** Physical height in inches (e.g. from Fox catalog sheet). */
+  physicalHeightInches?: number;
+  /** Power / PSU line from catalog sheet; copied to rack `sheetPower` when placed. */
+  sheetPower?: string;
+  /** Catalog / sheet notes; copied to rack `deviceNotes` when placed. */
+  notes?: string;
 }
 
 export interface Cable {

@@ -7,9 +7,24 @@ import { prisma } from './db/client';
 import { racksRouter } from './routes/racks';
 import { employeesRouter } from './routes/employees';
 import { adminRouter } from './routes/admin';
+import { catalogRouter } from './routes/catalog';
+import { deviceCategoriesRouter } from './routes/deviceCategories';
 import { errorHandler } from './middleware/errorHandler';
+import {
+  syncCatalogFromConfiguredFile,
+  syncCatalogFromConfiguredUrl,
+  syncCatalogFromGoogleSheet,
+} from './services/catalogSync';
 
 dotenv.config();
+
+/** Minimum catalog poll interval (ms). Below this, scheduled sync is disabled to avoid hammering Google/file sources. */
+const MIN_CATALOG_SYNC_INTERVAL_MS = 15_000;
+
+function catalogPruneMissingFromEnv(): boolean {
+  const v = process.env.FOX_CATALOG_PRUNE_ON_SYNC?.trim().toLowerCase();
+  return v === '1' || v === 'true' || v === 'yes';
+}
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -41,7 +56,50 @@ app.get('/health', async (_req, res, next) => {
 
 app.use('/api/employees', employeesRouter);
 app.use('/api/racks', racksRouter);
+app.use('/api/catalog', catalogRouter);
+app.use('/api/device-categories', deviceCategoriesRouter);
 app.use('/admin', adminRouter);
+
+function scheduleFoxCatalogSync(): void {
+  const ms = Number(process.env.FOX_CATALOG_SYNC_INTERVAL_MS ?? 0);
+  if (!Number.isFinite(ms) || ms < MIN_CATALOG_SYNC_INTERVAL_MS) return;
+  const prune = catalogPruneMissingFromEnv();
+  const tick = async () => {
+    try {
+      if (process.env.GOOGLE_SHEETS_SPREADSHEET_ID?.trim()) {
+        await syncCatalogFromGoogleSheet({ pruneMissing: prune });
+      } else if (process.env.FOX_CATALOG_CSV_URL?.trim()) {
+        await syncCatalogFromConfiguredUrl({ pruneMissing: prune });
+      } else {
+        await syncCatalogFromConfiguredFile({ pruneMissing: prune });
+      }
+    } catch (e) {
+      console.error('[catalog] scheduled sync failed', e);
+    }
+  };
+  void tick();
+  setInterval(() => void tick(), ms);
+}
+
+if (process.env.FOX_CATALOG_SYNC_ON_STARTUP === '1') {
+  void (async () => {
+    try {
+      const prune = catalogPruneMissingFromEnv();
+      if (process.env.GOOGLE_SHEETS_SPREADSHEET_ID?.trim()) {
+        await syncCatalogFromGoogleSheet({ pruneMissing: prune });
+      } else if (process.env.FOX_CATALOG_CSV_URL?.trim()) {
+        await syncCatalogFromConfiguredUrl({ pruneMissing: prune });
+      } else {
+        await syncCatalogFromConfiguredFile({ pruneMissing: prune });
+      }
+      console.log('[catalog] startup sync completed');
+    } catch (e) {
+      console.warn('[catalog] startup sync skipped or failed:', e);
+    }
+  })();
+}
+
+scheduleFoxCatalogSync();
 
 if (isProduction) {
   const distPath = resolveFrontendDist();
@@ -81,4 +139,9 @@ app.use(errorHandler);
 
 app.listen(PORT, () => {
   console.log(`Server listening on port ${PORT}`);
+  if (Number(process.env.FOX_CATALOG_SYNC_INTERVAL_MS ?? 0) >= MIN_CATALOG_SYNC_INTERVAL_MS) {
+    console.log(
+      `[catalog] polling sync every ${process.env.FOX_CATALOG_SYNC_INTERVAL_MS}ms (Google Sheet API, CSV URL, or local file)`,
+    );
+  }
 });

@@ -1,7 +1,7 @@
 import type { ConnectablePair } from './cableFinder';
 import type { Port } from '../data/equipment';
 import type { RackCableVisualEdge, RackConnection, RackDevice } from '../types/rack';
-import { minCableInchesBetweenPlacedDevices } from './rackCableMetrics';
+import { minCableInchesBetweenPlacedDevices, roundCableLengthInches } from './rackCableMetrics';
 import { findMatchingPortPairs } from './rackConnections';
 
 export function portsEqual(a: Port, b: Port): boolean {
@@ -75,7 +75,7 @@ export function connectionFromSuggestedPair(
     fromPort: pair.fromPort,
     toPort: pair.toPort,
     cableType,
-    estimatedLength: Math.max(1, Math.ceil(minIn / 12)),
+    estimatedLength: Math.max(0.01, roundCableLengthInches(minIn / 12)),
     adapters,
     minCableLengthInches: minIn,
     extraSlackInches: 0,
@@ -94,6 +94,13 @@ export type ManualConnectionVisualRoute = {
   toYRatio?: number;
 };
 
+/** After reconfiguring ports, rebuild the same anchors the drag would have used (see RackCableOverlay). */
+export type BuildManualConnectionVisualRoute = (
+  m: { fromDeviceId: string; toDeviceId: string; fromPort: Port; toPort: Port },
+  devFrom: RackDevice,
+  devTo: RackDevice,
+) => ManualConnectionVisualRoute;
+
 export function connectionFromManualPorts(
   from: RackDevice,
   to: RackDevice,
@@ -103,9 +110,14 @@ export function connectionFromManualPorts(
   slackFeet: number,
   extraSlackInches: number,
   visualRoute?: ManualConnectionVisualRoute,
+  /** When set (e.g. anchor + drag resolved in the overlay), used as the stored minimum inches instead of center-based math + extra. */
+  resolvedMinCableLengthInches?: number,
 ): RackConnection {
-  const minIn = minCableInchesBetweenPlacedDevices(from, to, inchesPerRU, slackFeet);
-  const totalMin = Math.ceil(minIn + extraSlackInches);
+  const totalMin =
+    resolvedMinCableLengthInches ??
+    roundCableLengthInches(
+      minCableInchesBetweenPlacedDevices(from, to, inchesPerRU, slackFeet) + extraSlackInches,
+    );
   return {
     id: `conn-manual-${from.id}-${to.id}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     fromDeviceId: from.id,
@@ -113,7 +125,7 @@ export function connectionFromManualPorts(
     fromPort,
     toPort,
     cableType: `${fromPort.type}→${toPort.type}`,
-    estimatedLength: Math.max(1, Math.ceil(totalMin / 12)),
+    estimatedLength: Math.max(0.01, roundCableLengthInches(totalMin / 12)),
     minCableLengthInches: totalMin,
     extraSlackInches,
     cableStyle: 'manual',

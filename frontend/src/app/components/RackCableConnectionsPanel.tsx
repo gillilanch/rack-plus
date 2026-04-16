@@ -66,10 +66,10 @@ export function RackCableConnectionsPanel({ devices }: RackCableConnectionsPanel
   }
 
   return (
-    <div className="shrink-0 border-t border-gray-100 pt-6">
-      <div className="mb-4 rounded-lg border border-blue-100 bg-blue-50/80 p-3">
-        <h3 className="font-semibold text-blue-950">Connections between rack devices</h3>
-        <p className="mt-1 text-sm text-blue-900/90">
+    <div className="shrink-0 border-t border-slate-600/80 pt-6">
+      <div className="mb-4 rounded-lg border border-sky-800/60 bg-sky-950/40 p-3">
+        <h3 className="font-semibold text-sky-100">Connections between rack devices</h3>
+        <p className="mt-1 text-sm text-sky-200/90">
           Pick two devices from this rack (same list as above). We suggest cables and adapters from their ports.
           Add or edit ports on each device via the rack editor when needed.
         </p>
@@ -80,9 +80,10 @@ export function RackCableConnectionsPanel({ devices }: RackCableConnectionsPanel
         onSelectPreset={handlePresetSelect}
         requiredDeviceIds={rackDeviceIds}
         variant="embedded"
+        embeddedSurface="dark"
       />
 
-      <div className="rounded-lg border border-gray-200 bg-gray-50/50 p-4">
+      <div className="rounded-lg border border-slate-600/80 bg-slate-900/50 p-4">
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_auto_1fr]">
           <DeviceSelector
             devices={cableDevices}
@@ -92,7 +93,7 @@ export function RackCableConnectionsPanel({ devices }: RackCableConnectionsPanel
             placeholder="Select source…"
           />
           <div className="hidden items-center justify-center pt-8 lg:flex">
-            <ArrowRight className="size-7 text-gray-400" />
+            <ArrowRight className="size-7 text-slate-500" />
           </div>
           <DeviceSelector
             devices={cableDevices}
@@ -110,7 +111,7 @@ export function RackCableConnectionsPanel({ devices }: RackCableConnectionsPanel
             className={`flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold transition-all ${
               canFind
                 ? 'bg-blue-600 text-white shadow-sm hover:bg-blue-700'
-                : 'cursor-not-allowed bg-gray-200 text-gray-400'
+                : 'cursor-not-allowed bg-slate-700 text-slate-500'
             }`}
           >
             <Cable className="size-4" />
@@ -120,7 +121,7 @@ export function RackCableConnectionsPanel({ devices }: RackCableConnectionsPanel
             <button
               type="button"
               onClick={handleReset}
-              className="flex items-center gap-2 rounded-lg bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 ring-1 ring-gray-200 transition-colors hover:bg-gray-50"
+              className="flex items-center gap-2 rounded-lg border border-slate-500 bg-slate-800 px-4 py-2.5 text-sm font-semibold text-slate-200 transition-colors hover:bg-slate-700"
             >
               <RefreshCw className="size-4" />
               Reset
@@ -128,14 +129,14 @@ export function RackCableConnectionsPanel({ devices }: RackCableConnectionsPanel
           )}
         </div>
         {fromId !== null && toId !== null && fromId === toId && (
-          <p className="mt-2 text-sm text-amber-700">Choose two different devices.</p>
+          <p className="mt-2 text-sm text-amber-300">Choose two different devices.</p>
         )}
       </div>
 
       {showResults && fromCable && toCable && (
-        <div className="mt-4 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+        <div className="mt-4 rounded-lg border border-slate-600/80 bg-slate-900/70 p-4 shadow-sm">
           {solutions.length === 0 ? (
-            <p className="text-sm text-gray-600">
+            <p className="text-sm text-slate-400">
               No compatible path found from these port definitions. Open a device on the rack and add inputs/outputs
               that match your gear.
             </p>

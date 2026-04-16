@@ -19,6 +19,8 @@ model Rack {
   inchesPerRU    Float        @default(1.75) @map("inches_per_ru")
   /// Front-panel width (e.g. 19" EIA equipment width).
   rackWidthInches Float       @default(19) @map("rack_width_inches")
+  /// Usable cabinet depth (inches), front to rear; for documentation / footprint.
+  rackDepthInches Float        @default(32) @map("rack_depth_inches")
   slackAllowance Float        @map("slack_allowance")
   connections    Json         @default("[]")
   createdAt      DateTime     @default(now()) @map("created_at")
@@ -43,6 +45,12 @@ model RackDevice {
   /// Horizontal offset from left rail in inches (0 = flush left within rack width).
   horizontalOffsetInches Float     @default(0) @map("horizontal_offset_inches")
   physicalHeightInches Decimal?     @map("physical_height_inches") @db.Decimal(10, 2)
+  /// Equipment face depth from sheet import (inches); optional documentation.
+  deviceDepthInches   Float?       @map("device_depth_inches")
+  /// Freeform power / PSU line from sheet import.
+  sheetPower           String?      @map("sheet_power") @db.Text
+  /// Freeform notes (e.g. from Fox equipment sheet / user).
+  deviceNotes          String?      @map("device_notes") @db.Text
   catalogDeviceId      String?      @map("catalog_device_id")
   sortOrder            Int          @default(0) @map("sort_order")
   createdAt            DateTime     @default(now()) @map("created_at")
@@ -65,4 +73,48 @@ model DevicePort {
 
   @@index([rackDeviceId])
   @@map("device_port")
+}
+
+/// Names added via Device database → Fox Employees (not in the static directory file).
+/// User-defined rack / device categories (CSV import resolves against this list; unknown → Other).
+model DeviceCategory {
+  id             String   @id @default(uuid())
+  name           String
+  normalizedKey  String   @unique @map("normalized_key")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@map("device_category")
+}
+
+model FoxEmployeeExtra {
+  id            String   @id @default(uuid())
+  displayName   String   @map("display_name")
+  normalizedKey String   @unique @map("normalized_key")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@map("fox_employee_extra")
+}
+
+/// AVCAD / Fox consolidated equipment sheet → shared Postgres catalog (synced from CSV).
+model CatalogDevice {
+  id             String   @id @default(uuid())
+  normalizedKey  String   @unique @map("normalized_key")
+  manufacturer   String
+  model          String
+  sheetCategory  String   @map("sheet_category")
+  appCategory    String   @map("app_category")
+  power          String?
+  widthInches    Float?   @map("width_inches")
+  heightInches   Float?   @map("height_inches")
+  depthInches    Float?   @map("depth_inches")
+  notes          String?
+  /// Parsed Ins/Outs from AVCAD sheet: [{ "type", "direction", "label?", "count?" }, ...]
+  ports          Json     @default("[]")
+  heightInU      Int      @map("height_in_u")
+  lastSyncedAt   DateTime @default(now()) @map("last_synced_at")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@index([manufacturer])
+  @@map("catalog_device")
 }

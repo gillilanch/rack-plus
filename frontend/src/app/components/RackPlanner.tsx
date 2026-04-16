@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useBlocker } from 'react-router';
 import type { Blocker } from 'react-router';
-import { toJpeg } from 'html-to-image';
+import { toPng } from 'html-to-image';
 import { DndProvider } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
 import type { Device } from '../data/equipment';
@@ -13,8 +13,14 @@ import {
   hasDirectedPortConnection,
 } from '../utils/rackConnectionHelpers';
 import { saveCustomDevice } from '../utils/customDevices';
-import { deviceCategoryToManualLabel, mergeBuiltInAndCustomDevices } from '../utils/deviceCatalogSearch';
-import { DEFAULT_INCHES_PER_RU, DEFAULT_RACK_WIDTH_INCHES } from '../utils/rackUnits';
+import { mergeBuiltInAndCustomDevices } from '../utils/deviceCatalogSearch';
+import { prefetchServerCatalogDevices } from '../utils/serverCatalogCache';
+import {
+  DEFAULT_INCHES_PER_RU,
+  DEFAULT_RACK_DEPTH_INCHES,
+  DEFAULT_RACK_WIDTH_INCHES,
+  MAX_RACK_HEIGHT_U,
+} from '../utils/rackUnits';
 import {
   getDeviceDisplayName,
   inferManufacturerModelFromLegacyName,
@@ -23,15 +29,16 @@ import {
 import { filterPlaceholderRackDevices } from '../utils/rackPlaceholders';
 import { AddDeviceModal } from './AddDeviceModal';
 import { CSVImport, type CsvImportCompletePayload } from './CSVImport';
-import { ManualDeviceAdd } from './ManualDeviceAdd';
+import { ManualDeviceAdd, type ManualAddDevicePayload } from './ManualDeviceAdd';
 import { CsvUnmatchedReviewModal, type CsvUnmatchedQueueItem } from './CsvUnmatchedReviewModal';
 import { RackPlannerWorkArea } from './RackPlannerWorkArea';
+import type { RackPortMismatchPayload } from './RackVisualizer';
 import { RackDeviceEditor } from './RackDeviceEditor';
 import { RackDualDeviceEditor } from './RackDualDeviceEditor';
 import { CurrentRacksModal } from './CurrentRacksModal';
 import { SaveRackModal, type SaveRackMode } from './SaveRackModal';
 import type { RackSaveAttribution } from '../api/racks';
-import { AlertTriangle, CloudOff, ImageDown, Loader2, Printer, Save, Settings } from 'lucide-react';
+import { AlertTriangle, CloudOff, ImageDown, Loader2, Plus, Printer, Save, Settings } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   clampDeviceWidthToRack,
@@ -46,19 +53,26 @@ import {
 /** Session-only: each browser tab/session starts fresh; explicit save still persists to the server. */
 const RACK_SESSION_KEY = 'rackPlanner.rackId';
 
+/** Avoid one giant React commit when CSV import adds hundreds of devices (keeps UI responsive). */
+const CSV_IMPORT_DEVICE_CHUNK = 48;
+
 const rackSizeInputPlainClass =
   'w-full rounded-lg border border-slate-300 px-4 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#003366]';
+
+const rackSizeInputPlainNightClass =
+  'w-full rounded-lg border border-slate-600 bg-slate-900/90 px-4 py-2 text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-sky-500/40';
 
 const rackSizeInputCableClass =
   'w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-center text-lg font-semibold tabular-nums tracking-tight text-[#003366] shadow-inner focus:border-[#003366] focus:outline-none focus:ring-2 focus:ring-[#003366]/30 sm:text-left';
 
+const rackSizeInputCableNightClass =
+  'w-full rounded-lg border border-slate-600 bg-slate-900/80 px-3 py-2.5 text-center text-lg font-semibold tabular-nums tracking-tight text-sky-200 shadow-inner focus:border-sky-500/50 focus:outline-none focus:ring-2 focus:ring-sky-500/30 sm:text-left';
+
 function RackSizeFields(props: {
   totalHeight: number;
   setTotalHeight: (v: number) => void;
-  rackWidthInches: number;
-  setRackWidthInches: (v: number) => void;
-  inchesPerRU: number;
-  setInchesPerRU: (v: number) => void;
+  rackDepthInches: number;
+  setRackDepthInches: (v: number) => void;
   markRackDirty: () => void;
   /** Omit on secondary panels where context is already in the section header. */
   subtitle?: string | null;
@@ -66,35 +80,51 @@ function RackSizeFields(props: {
   visual?: 'plain' | 'cable';
   /** When visual=cable: tighter panel inside an existing settings card (no full-bleed shell). */
   cableLayout?: 'page' | 'embedded';
+  /** Dark workspace (rack / edit pages): inputs and cable shell match night UI. */
+  nightChrome?: boolean;
 }) {
   const {
     totalHeight,
     setTotalHeight,
-    rackWidthInches,
-    setRackWidthInches,
-    inchesPerRU,
-    setInchesPerRU,
+    rackDepthInches,
+    setRackDepthInches,
     markRackDirty,
-    subtitle = 'Set total U, rack width, and inches per RU before you import a list or place gear.',
+    subtitle = `Set total U (max ${MAX_RACK_HEIGHT_U}) and cabinet depth. Rack width is fixed at ${DEFAULT_RACK_WIDTH_INCHES} in and ${DEFAULT_INCHES_PER_RU} in per U (EIA).`,
     visual = 'plain',
     cableLayout = 'page',
+    nightChrome = false,
   } = props;
 
-  const inputClass = visual === 'cable' ? rackSizeInputCableClass : rackSizeInputPlainClass;
+  const inputClass =
+    visual === 'cable'
+      ? nightChrome
+        ? rackSizeInputCableNightClass
+        : rackSizeInputCableClass
+      : nightChrome
+        ? rackSizeInputPlainNightClass
+        : rackSizeInputPlainClass;
 
   const fieldsGrid = (
-    <div
-      className={`grid sm:grid-cols-3 ${visual === 'cable' ? 'gap-4' : 'max-w-2xl gap-6'}`}
-    >
+    <div className={`grid sm:grid-cols-2 ${visual === 'cable' ? 'gap-4' : 'max-w-2xl gap-6'}`}>
       <div
         className={
           visual === 'cable'
-            ? 'rounded-xl border border-slate-200/90 bg-gradient-to-b from-white to-slate-50/90 p-4 shadow-sm'
+            ? nightChrome
+              ? 'rounded-xl border border-slate-600/90 bg-gradient-to-b from-slate-800 to-slate-900/95 p-4 shadow-sm'
+              : 'rounded-xl border border-slate-200/90 bg-gradient-to-b from-white to-slate-50/90 p-4 shadow-sm'
             : ''
         }
       >
         <label
-          className={`mb-2 block ${visual === 'cable' ? 'font-cable-display text-[11px] font-bold uppercase tracking-[0.12em] text-slate-500' : 'text-sm font-medium text-slate-800'}`}
+          className={`mb-2 block ${
+            visual === 'cable'
+              ? nightChrome
+                ? 'font-cable-display text-[11px] font-bold uppercase tracking-[0.12em] text-slate-400'
+                : 'font-cable-display text-[11px] font-bold uppercase tracking-[0.12em] text-slate-500'
+              : nightChrome
+                ? 'text-sm font-medium text-slate-300'
+                : 'text-sm font-medium text-slate-800'
+          }`}
         >
           Total rack height (U)
         </label>
@@ -102,83 +132,78 @@ function RackSizeFields(props: {
           type="number"
           value={totalHeight}
           onChange={(e) => {
-            setTotalHeight(Math.max(1, parseInt(e.target.value, 10) || 1));
+            const raw = parseInt(e.target.value, 10);
+            const n = Number.isNaN(raw) ? 1 : raw;
+            setTotalHeight(Math.min(MAX_RACK_HEIGHT_U, Math.max(1, n)));
             markRackDirty();
           }}
           min={1}
-          max={100}
+          max={MAX_RACK_HEIGHT_U}
           className={inputClass}
         />
         <p
-          className={`mt-2 text-xs leading-snug ${visual === 'cable' ? 'font-cable-ui text-slate-500' : 'text-slate-500'}`}
+          className={`mt-2 text-xs leading-snug ${
+            visual === 'cable'
+              ? nightChrome
+                ? 'font-cable-ui text-slate-400'
+                : 'font-cable-ui text-slate-500'
+              : nightChrome
+                ? 'text-slate-400'
+                : 'text-slate-500'
+          }`}
         >
-          {(totalHeight * inchesPerRU).toFixed(2)}&quot; tall (using inches/RU below)
+          {(totalHeight * DEFAULT_INCHES_PER_RU).toFixed(2)}&quot; tall ({DEFAULT_INCHES_PER_RU}&quot; per U)
         </p>
       </div>
       <div
         className={
           visual === 'cable'
-            ? 'rounded-xl border border-slate-200/90 bg-gradient-to-b from-white to-slate-50/90 p-4 shadow-sm'
+            ? nightChrome
+              ? 'rounded-xl border border-slate-600/90 bg-gradient-to-b from-slate-800 to-slate-900/95 p-4 shadow-sm'
+              : 'rounded-xl border border-slate-200/90 bg-gradient-to-b from-white to-slate-50/90 p-4 shadow-sm'
             : ''
         }
       >
         <label
-          className={`mb-2 block ${visual === 'cable' ? 'font-cable-display text-[11px] font-bold uppercase tracking-[0.12em] text-slate-500' : 'text-sm font-medium text-slate-800'}`}
+          className={`mb-2 block ${
+            visual === 'cable'
+              ? nightChrome
+                ? 'font-cable-display text-[11px] font-bold uppercase tracking-[0.12em] text-slate-400'
+                : 'font-cable-display text-[11px] font-bold uppercase tracking-[0.12em] text-slate-500'
+              : nightChrome
+                ? 'text-sm font-medium text-slate-300'
+                : 'text-sm font-medium text-slate-800'
+          }`}
         >
-          Rack width (inches)
+          Rack depth (inches)
         </label>
         <input
           type="number"
-          value={rackWidthInches}
+          value={rackDepthInches}
           onChange={(e) => {
             const n = parseFloat(e.target.value);
-            if (!Number.isNaN(n) && n > 0 && n <= 120) {
-              setRackWidthInches(n);
+            if (!Number.isNaN(n) && n >= 6 && n <= 120) {
+              setRackDepthInches(n);
               markRackDirty();
             }
           }}
-          min={0.01}
+          min={6}
           max={120}
           step={0.25}
           className={inputClass}
         />
         <p
-          className={`mt-2 text-xs leading-snug ${visual === 'cable' ? 'font-cable-ui text-slate-500' : 'text-slate-500'}`}
+          className={`mt-2 text-xs leading-snug ${
+            visual === 'cable'
+              ? nightChrome
+                ? 'font-cable-ui text-slate-400'
+                : 'font-cable-ui text-slate-500'
+              : nightChrome
+                ? 'text-slate-400'
+                : 'text-slate-500'
+          }`}
         >
-          Typical 19&quot; equipment width (EIA). Diagram scales with height.
-        </p>
-      </div>
-      <div
-        className={
-          visual === 'cable'
-            ? 'rounded-xl border border-slate-200/90 bg-gradient-to-b from-white to-slate-50/90 p-4 shadow-sm'
-            : ''
-        }
-      >
-        <label
-          className={`mb-2 block ${visual === 'cable' ? 'font-cable-display text-[11px] font-bold uppercase tracking-[0.12em] text-slate-500' : 'text-sm font-medium text-slate-800'}`}
-        >
-          Inches per 1U (RU)
-        </label>
-        <input
-          type="number"
-          value={inchesPerRU}
-          onChange={(e) => {
-            const n = parseFloat(e.target.value);
-            if (!Number.isNaN(n) && n > 0 && n <= 48) {
-              setInchesPerRU(n);
-              markRackDirty();
-            }
-          }}
-          min={0.01}
-          max={48}
-          step={0.01}
-          className={inputClass}
-        />
-        <p
-          className={`mt-2 text-xs leading-snug ${visual === 'cable' ? 'font-cable-ui text-slate-500' : 'text-slate-500'}`}
-        >
-          Standard EIA rack is 1.75&quot; per U.
+          Front rail to rear (usable cabinet depth). Does not change the face diagram.
         </p>
       </div>
     </div>
@@ -189,7 +214,7 @@ function RackSizeFields(props: {
       <>
         <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#CC0000]">Rack size</p>
         {subtitle != null && subtitle !== '' && (
-          <p className="mt-1 text-sm text-slate-600">{subtitle}</p>
+          <p className={`mt-1 text-sm ${nightChrome ? 'text-slate-400' : 'text-slate-600'}`}>{subtitle}</p>
         )}
         <div className="mt-4">{fieldsGrid}</div>
       </>
@@ -198,8 +223,12 @@ function RackSizeFields(props: {
 
   const shellClass =
     cableLayout === 'embedded'
-      ? 'overflow-hidden rounded-xl border-2 border-slate-200 bg-white shadow-md'
-      : 'overflow-hidden rounded-2xl border-2 border-slate-200 bg-white shadow-[0_6px_32px_-8px_rgba(0,51,102,0.18)]';
+      ? nightChrome
+        ? 'overflow-hidden rounded-xl border-2 border-slate-600 bg-slate-800/95 shadow-md'
+        : 'overflow-hidden rounded-xl border-2 border-slate-200 bg-white shadow-md'
+      : nightChrome
+        ? 'overflow-hidden rounded-2xl border-2 border-slate-600 bg-slate-800/95 shadow-[0_6px_32px_-8px_rgba(0,0,0,0.35)]'
+        : 'overflow-hidden rounded-2xl border-2 border-slate-200 bg-white shadow-[0_6px_32px_-8px_rgba(0,51,102,0.18)]';
 
   return (
     <div className={`font-cable-ui ${shellClass}`}>
@@ -209,17 +238,29 @@ function RackSizeFields(props: {
           aria-hidden
         />
         <div className="min-w-0 flex-1 px-5 py-5 sm:px-6 sm:py-6">
-          <div className="flex flex-col gap-3 border-b border-slate-100 pb-4 sm:flex-row sm:items-end sm:justify-between">
+          <div
+            className={`flex flex-col gap-3 border-b pb-4 sm:flex-row sm:items-end sm:justify-between ${
+              nightChrome ? 'border-slate-600/80' : 'border-slate-100'
+            }`}
+          >
             <div>
               <p className="font-cable-display text-[0.65rem] font-bold uppercase tracking-[0.32em] text-[#CC0000]">
                 Rack size
               </p>
               {cableLayout === 'page' ? (
-                <p className="font-cable-display mt-1 text-xl font-bold tracking-tight text-[#003366] sm:text-2xl">
+                <p
+                  className={`font-cable-display mt-1 text-xl font-bold tracking-tight sm:text-2xl ${
+                    nightChrome ? 'text-sky-200' : 'text-[#003366]'
+                  }`}
+                >
                   Physical footprint
                 </p>
               ) : (
-                <p className="font-cable-display mt-1 text-lg font-bold tracking-tight text-[#003366]">
+                <p
+                  className={`font-cable-display mt-1 text-lg font-bold tracking-tight ${
+                    nightChrome ? 'text-sky-200' : 'text-[#003366]'
+                  }`}
+                >
                   Dimensions
                 </p>
               )}
@@ -229,7 +270,13 @@ function RackSizeFields(props: {
             </p>
           </div>
           {subtitle != null && subtitle !== '' && (
-            <p className="font-cable-ui mt-4 max-w-2xl text-sm leading-relaxed text-slate-600">{subtitle}</p>
+            <p
+              className={`font-cable-ui mt-4 max-w-2xl text-sm leading-relaxed ${
+                nightChrome ? 'text-slate-400' : 'text-slate-600'
+              }`}
+            >
+              {subtitle}
+            </p>
           )}
           <div className="mt-5">{fieldsGrid}</div>
         </div>
@@ -241,8 +288,7 @@ function RackSizeFields(props: {
 function hydrateFromConfig(config: RackConfiguration, setters: {
   setRackName: (v: string) => void;
   setTotalHeight: (v: number) => void;
-  setInchesPerRU: (v: number) => void;
-  setRackWidthInches: (v: number) => void;
+  setRackDepthInches: (v: number) => void;
   setSlackAllowance: (v: number) => void;
   setConnections: (v: RackConfiguration['connections']) => void;
   setDevices: (v: RackDevice[]) => void;
@@ -250,9 +296,8 @@ function hydrateFromConfig(config: RackConfiguration, setters: {
 }) {
   setters.setRackId(config.id);
   setters.setRackName(config.name);
-  setters.setTotalHeight(config.totalHeight);
-  setters.setInchesPerRU(config.inchesPerRU ?? DEFAULT_INCHES_PER_RU);
-  setters.setRackWidthInches(config.rackWidthInches ?? DEFAULT_RACK_WIDTH_INCHES);
+  setters.setTotalHeight(Math.min(MAX_RACK_HEIGHT_U, Math.max(1, config.totalHeight)));
+  setters.setRackDepthInches(config.rackDepthInches ?? DEFAULT_RACK_DEPTH_INCHES);
   setters.setSlackAllowance(config.slackAllowance);
   setters.setConnections(config.connections);
   setters.setDevices(filterPlaceholderRackDevices(config.devices as RackDevice[]));
@@ -277,10 +322,9 @@ export function RackPlanner({
 }: RackPlannerProps = {}) {
   const [rackId, setRackId] = useState<string | null>(null);
   const [rackName, setRackName] = useState('Production Rack 1');
-  const [totalHeight, setTotalHeight] = useState(42);
+  const [totalHeight, setTotalHeightState] = useState(42);
   const [slackAllowance, setSlackAllowance] = useState(0);
-  const [inchesPerRU, setInchesPerRU] = useState(DEFAULT_INCHES_PER_RU);
-  const [rackWidthInches, setRackWidthInches] = useState(DEFAULT_RACK_WIDTH_INCHES);
+  const [rackDepthInches, setRackDepthInches] = useState(DEFAULT_RACK_DEPTH_INCHES);
   const [connections, setConnections] = useState<RackConfiguration['connections']>([]);
   const [devices, setDevices] = useState<RackDevice[]>([]);
   const [editingDevice, setEditingDevice] = useState<RackDevice | null>(null);
@@ -292,20 +336,26 @@ export function RackPlanner({
   const [csvReviewOpen, setCsvReviewOpen] = useState(false);
   const [csvAddModalOpen, setCsvAddModalOpen] = useState(false);
   const [csvAddTargetId, setCsvAddTargetId] = useState<string | null>(null);
-  const [csvAddPrefillName, setCsvAddPrefillName] = useState('');
+  const [csvAddSnapshot, setCsvAddSnapshot] = useState<CsvUnmatchedQueueItem | null>(null);
   const [currentRacksOpen, setCurrentRacksOpen] = useState(initialOpenRackLibrary);
   const [saveRackModalOpen, setSaveRackModalOpen] = useState(false);
-  const [portMismatch, setPortMismatch] = useState<{
-    from: RackDevice;
-    to: RackDevice;
-    extra: number;
-  } | null>(null);
+  const [portMismatch, setPortMismatch] = useState<RackPortMismatchPayload | null>(null);
   const [dualDevices, setDualDevices] = useState<{ a: RackDevice; b: RackDevice } | null>(null);
-  const pendingCableRef = useRef<{ fromId: string; toId: string; extra: number } | null>(null);
+  const pendingCableRef = useRef<{
+    fromId: string;
+    toId: string;
+    extraSlackInches: number;
+    buildVisualRoute: RackPortMismatchPayload['buildVisualRoute'];
+  } | null>(null);
   const rackCaptureRef = useRef<HTMLDivElement | null>(null);
   const [rackDirty, setRackDirty] = useState(false);
   const pendingLeaveAfterSaveRef = useRef(false);
   const blockerRef = useRef<Blocker | null>(null);
+  const [serverCatalogTick, setServerCatalogTick] = useState(0);
+
+  useEffect(() => {
+    void prefetchServerCatalogDevices().then(() => setServerCatalogTick((n) => n + 1));
+  }, []);
 
   const blocker = useBlocker(
     useCallback(
@@ -322,6 +372,14 @@ export function RackPlanner({
   blockerRef.current = blocker;
 
   const markRackDirty = useCallback(() => setRackDirty(true), []);
+
+  const setTotalHeight = useCallback((v: number) => {
+    const n = Number.isFinite(v) ? Math.floor(v) : 1;
+    setTotalHeightState(Math.min(MAX_RACK_HEIGHT_U, Math.max(1, n)));
+  }, []);
+
+  const inchesPerRU = DEFAULT_INCHES_PER_RU;
+  const rackWidthInches = DEFAULT_RACK_WIDTH_INCHES;
 
   const completeSaveLifecycle = useCallback(() => {
     setRackDirty(false);
@@ -371,19 +429,17 @@ export function RackPlanner({
     [markRackDirty],
   );
 
-  const handlePortMismatch = useCallback(
-    (p: { from: RackDevice; to: RackDevice; extraSlackInches: number }) => {
-      setPortMismatch({ from: p.from, to: p.to, extra: p.extraSlackInches });
-    },
-    [],
-  );
+  const handlePortMismatch = useCallback((p: RackPortMismatchPayload) => {
+    setPortMismatch(p);
+  }, []);
 
   const handlePortMismatchYes = useCallback(() => {
     if (!portMismatch) return;
     pendingCableRef.current = {
       fromId: portMismatch.from.id,
       toId: portMismatch.to.id,
-      extra: portMismatch.extra,
+      extraSlackInches: portMismatch.extraSlackInches,
+      buildVisualRoute: portMismatch.buildVisualRoute,
     };
     setDualDevices({ a: portMismatch.from, b: portMismatch.to });
     setPortMismatch(null);
@@ -435,7 +491,9 @@ export function RackPlanner({
               m.toPort,
               inchesPerRU,
               slackAllowance,
-              pend.extra,
+              pend.extraSlackInches,
+              pend.buildVisualRoute(m, devFrom, devTo),
+              undefined,
             ),
           ];
         });
@@ -453,14 +511,13 @@ export function RackPlanner({
     () => ({
       setRackName,
       setTotalHeight,
-      setInchesPerRU,
-      setRackWidthInches,
+      setRackDepthInches,
       setSlackAllowance,
       setConnections,
       setDevices,
       setRackId,
     }),
-    [],
+    [setTotalHeight],
   );
 
   useEffect(() => {
@@ -494,8 +551,7 @@ export function RackPlanner({
           setRackId(null);
           setRackName('New rack');
           setTotalHeight(42);
-          setInchesPerRU(DEFAULT_INCHES_PER_RU);
-          setRackWidthInches(DEFAULT_RACK_WIDTH_INCHES);
+          setRackDepthInches(DEFAULT_RACK_DEPTH_INCHES);
           setSlackAllowance(0);
           setConnections([]);
           setDevices([]);
@@ -525,6 +581,7 @@ export function RackPlanner({
                   totalHeight: 42,
                   inchesPerRU: DEFAULT_INCHES_PER_RU,
                   rackWidthInches: DEFAULT_RACK_WIDTH_INCHES,
+                  rackDepthInches: DEFAULT_RACK_DEPTH_INCHES,
                   slackAllowance: 0,
                   devices: [],
                   connections: [],
@@ -540,6 +597,7 @@ export function RackPlanner({
                     totalHeight: 42,
                     inchesPerRU: DEFAULT_INCHES_PER_RU,
                     rackWidthInches: DEFAULT_RACK_WIDTH_INCHES,
+                    rackDepthInches: DEFAULT_RACK_DEPTH_INCHES,
                     slackAllowance: 0,
                     devices: [],
                     connections: [],
@@ -571,7 +629,7 @@ export function RackPlanner({
     return () => {
       cancelled = true;
     };
-  }, [hydrateSetters, initialRackIdToLoad, forceNewRack]);
+  }, [hydrateSetters, initialRackIdToLoad, forceNewRack, setTotalHeight]);
 
   const handleOpenRackFromLibrary = useCallback(
     async (id: string) => {
@@ -589,8 +647,9 @@ export function RackPlanner({
       const payload = {
         name,
         totalHeight,
-        inchesPerRU,
-        rackWidthInches,
+        inchesPerRU: DEFAULT_INCHES_PER_RU,
+        rackWidthInches: DEFAULT_RACK_WIDTH_INCHES,
+        rackDepthInches,
         slackAllowance,
         devices,
         connections,
@@ -615,8 +674,7 @@ export function RackPlanner({
     [
       rackId,
       totalHeight,
-      inchesPerRU,
-      rackWidthInches,
+      rackDepthInches,
       slackAllowance,
       devices,
       connections,
@@ -629,7 +687,7 @@ export function RackPlanner({
     window.print();
   }, []);
 
-  const handleExportJpg = useCallback(async () => {
+  const handleExportRackPng = useCallback(async () => {
     const el = rackCaptureRef.current;
     if (!el) {
       setSaveError('Add at least one device to show the rack diagram before exporting.');
@@ -638,16 +696,15 @@ export function RackPlanner({
     }
     setSaveError(null);
     try {
-      const dataUrl = await toJpeg(el, {
-        quality: 0.92,
+      const dataUrl = await toPng(el, {
         pixelRatio: 2,
         cacheBust: true,
-        backgroundColor: '#ffffff',
+        backgroundColor: 'transparent',
       });
       const safe = rackName.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '-') || 'rack';
       const a = document.createElement('a');
       a.href = dataUrl;
-      a.download = `${safe}-rack.jpg`;
+      a.download = `${safe}-rack.png`;
       a.click();
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : 'Could not export image');
@@ -667,10 +724,34 @@ export function RackPlanner({
     [markRackDirty],
   );
 
+  const appendImportedDevicesInChunks = useCallback((incoming: RackDevice[]) => {
+    if (incoming.length === 0) return;
+    if (incoming.length <= CSV_IMPORT_DEVICE_CHUNK) {
+      startTransition(() => {
+        setDevices((prev) => [...prev, ...incoming]);
+      });
+      return;
+    }
+    let offset = 0;
+    const pump = () => {
+      const slice = incoming.slice(offset, offset + CSV_IMPORT_DEVICE_CHUNK);
+      offset += slice.length;
+      startTransition(() => {
+        setDevices((prev) => [...prev, ...slice]);
+      });
+      if (offset < incoming.length) {
+        requestAnimationFrame(pump);
+      }
+    };
+    requestAnimationFrame(pump);
+  }, []);
+
   const handleCsvImportComplete = useCallback(
     (payload: CsvImportCompletePayload) => {
       if (payload.matchedDevices.length > 0) {
-        setDevices((prev) => [...prev, ...payload.matchedDevices]);
+        appendImportedDevicesInChunks(
+          payload.matchedDevices.map((d) => normalizeRackDeviceIdentity({ ...d }) as RackDevice),
+        );
       }
       if (payload.unmatchedItems.length > 0) {
         setCsvUnmatchedQueue((prev) => {
@@ -690,7 +771,7 @@ export function RackPlanner({
         markRackDirty();
       }
     },
-    [markRackDirty],
+    [appendImportedDevicesInChunks, markRackDirty],
   );
 
   const removeCsvQueueItem = useCallback((id: string) => {
@@ -709,15 +790,20 @@ export function RackPlanner({
     (id: string) => {
       const item = csvUnmatchedQueue.find((x) => x.id === id);
       if (!item) return;
-      const { manufacturer, model } = inferManufacturerModelFromLegacyName(item.name);
+      const inferred = inferManufacturerModelFromLegacyName(item.name);
+      const manufacturer = (item.manufacturer ?? inferred.manufacturer).trim();
+      const model = (item.model ?? inferred.model).trim();
       const rack: RackDevice = normalizeRackDeviceIdentity({
         id: `imported-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
         name: item.name,
         manufacturer,
         model,
-        category: item.category as RackDevice['category'],
+        category: item.category,
         heightInU: item.heightInU,
         physicalHeightInches: item.physicalHeightInches,
+        deviceWidthInches: item.deviceWidthInches,
+        deviceDepthInches: item.deviceDepthInches,
+        sheetPower: item.sheetPower,
         ports: [],
       }) as RackDevice;
       setDevices((prev) => [...prev, rack]);
@@ -732,7 +818,7 @@ export function RackPlanner({
       const item = csvUnmatchedQueue.find((x) => x.id === id);
       if (!item) return;
       setCsvAddTargetId(id);
-      setCsvAddPrefillName(item.name);
+      setCsvAddSnapshot({ ...item });
       setCsvAddModalOpen(true);
     },
     [csvUnmatchedQueue],
@@ -741,7 +827,7 @@ export function RackPlanner({
   const closeCsvAddModal = useCallback(() => {
     setCsvAddModalOpen(false);
     setCsvAddTargetId(null);
-    setCsvAddPrefillName('');
+    setCsvAddSnapshot(null);
   }, []);
 
   const handleCsvSaveCustomDevice = useCallback(
@@ -761,10 +847,12 @@ export function RackPlanner({
         name: device.name,
         manufacturer: device.manufacturer,
         model: device.model,
-        category: deviceCategoryToManualLabel(device.category) as RackDevice['category'],
+        category: device.category,
         heightInU,
         physicalHeightInches: item.physicalHeightInches,
         deviceWidthInches,
+        deviceDepthInches: device.deviceDepthInches ?? item.deviceDepthInches,
+        sheetPower: item.sheetPower,
         ports: device.ports?.length ? device.ports : [],
       }) as RackDevice;
       setDevices((prev) => [...prev, rack]);
@@ -777,25 +865,22 @@ export function RackPlanner({
     const rack = devices.map((d) => getDeviceDisplayName(d));
     const db = mergeBuiltInAndCustomDevices().map((d) => getDeviceDisplayName(d));
     return [...rack, ...db];
-  }, [devices, csvAddModalOpen]);
+  }, [devices, csvAddModalOpen, serverCatalogTick]);
 
-  const handleAddManualDevice = (deviceData: {
-    manufacturer: string;
-    model: string;
-    name: string;
-    category: string;
-    heightInU: number;
-    heightInches?: number;
-    deviceWidthInches?: number;
-    ports?: RackDevice['ports'];
-  }) => {
+  const handleAddManualDevice = (deviceData: ManualAddDevicePayload) => {
     const rw = rackWidthInches > 0 ? rackWidthInches : DEFAULT_RACK_WIDTH_INCHES;
     const deviceWidthInches =
       deviceData.deviceWidthInches != null
         ? clampDeviceWidthToRack(deviceData.deviceWidthInches, rw)
         : undefined;
+    const preferred = deviceData.preferredDeviceId?.trim();
+    const idTaken = preferred ? devices.some((d) => d.id === preferred) : true;
+    const newId =
+      preferred && !idTaken
+        ? preferred
+        : `manual-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
     const newDevice: RackDevice = normalizeRackDeviceIdentity({
-      id: `manual-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+      id: newId,
       name: deviceData.name,
       manufacturer: deviceData.manufacturer,
       model: deviceData.model,
@@ -803,6 +888,9 @@ export function RackPlanner({
       heightInU: deviceData.heightInU,
       physicalHeightInches: deviceData.heightInches,
       deviceWidthInches,
+      deviceDepthInches: deviceData.deviceDepthInches,
+      sheetPower: deviceData.sheetPower,
+      deviceNotes: deviceData.deviceNotes,
       ports: deviceData.ports?.length ? deviceData.ports : [],
     }) as RackDevice;
     setDevices((prev) => [...prev, newDevice]);
@@ -881,8 +969,8 @@ export function RackPlanner({
 
   if (loadState === 'loading' || loadState === 'idle') {
     return (
-      <div className="flex items-center gap-2 rounded-xl border-2 border-slate-200 bg-white p-8 text-gray-600 shadow-xl">
-        <Loader2 className="size-5 animate-spin" />
+      <div className="flex items-center gap-2 rounded-xl border-2 border-slate-600 bg-slate-800/90 p-8 text-slate-300 shadow-xl shadow-black/20">
+        <Loader2 className="size-5 animate-spin text-sky-400" />
         Loading rack…
       </div>
     );
@@ -890,17 +978,17 @@ export function RackPlanner({
 
   if (loadState === 'error') {
     return (
-      <div className="rounded-xl border border-amber-200 bg-amber-50 p-6 text-amber-900 shadow-sm">
+      <div className="rounded-xl border border-amber-700/50 bg-amber-950/40 p-6 text-amber-100 shadow-sm">
         <div className="flex items-start gap-3">
-          <CloudOff className="mt-0.5 size-5 shrink-0" />
+          <CloudOff className="mt-0.5 size-5 shrink-0 text-amber-400" />
           <div>
             <p className="font-medium">Could not load the rack from the API.</p>
-            <p className="mt-1 text-sm opacity-90">{loadError}</p>
-            <p className="mt-3 text-sm">
-              Start the backend (<code className="rounded bg-amber-100 px-1">cd backend && npm run dev</code>) and
+            <p className="mt-1 text-sm opacity-90 text-amber-100/90">{loadError}</p>
+            <p className="mt-3 text-sm text-amber-50/90">
+              Start the backend (<code className="rounded bg-amber-950/80 px-1 text-amber-100">cd backend && npm run dev</code>) and
               ensure PostgreSQL is running, then run{' '}
-              <code className="rounded bg-amber-100 px-1">npx prisma migrate deploy</code> in{' '}
-              <code className="rounded bg-amber-100 px-1">backend/</code>.
+              <code className="rounded bg-amber-950/80 px-1 text-amber-100">npx prisma migrate deploy</code> in{' '}
+              <code className="rounded bg-amber-950/80 px-1 text-amber-100">backend/</code>.
             </p>
           </div>
         </div>
@@ -923,16 +1011,17 @@ export function RackPlanner({
                   setRackName(e.target.value);
                   markRackDirty();
                 }}
-                className="-ml-2 border-b-2 border-transparent bg-transparent px-2 text-2xl font-bold text-gray-900 transition-colors hover:border-gray-300 focus:border-blue-500 focus:outline-none"
+                className="-ml-2 border-b-2 border-transparent bg-transparent px-2 text-2xl font-bold text-slate-100 transition-colors hover:border-slate-500 focus:border-sky-500 focus:outline-none"
               />
-              <p className="ml-2 mt-1 text-sm text-gray-600">
+              <p className="ml-2 mt-1 text-sm text-slate-400">
                 Import or add devices, then drag them into the rack. Each row is 1U; device height can be multiple U.
               </p>
-              <p className="ml-2 mt-1 text-xs font-medium text-[#003366]">
-                Rack width {rackWidthInches}&quot; — on the same U, combined device widths cannot exceed {rackWidthInches}
-                &quot; (edit device → pencil icon for width &amp; offset).
+              <p className="ml-2 mt-1 text-xs font-medium text-sky-300/90">
+                {rackWidthInches}&quot; wide × {rackDepthInches}&quot; deep (EIA, {inchesPerRU}&quot;/U) — on the same U,
+                combined device widths cannot exceed {rackWidthInches}&quot; (edit device → pencil for width &amp;
+                offset).
               </p>
-              <p className="ml-2 mt-2 text-xs text-gray-500">
+              <p className="ml-2 mt-2 text-xs text-slate-500">
                 {devices.length} device{devices.length !== 1 ? 's' : ''} · {placedDevices.length} placed
                 {placedDevices.length < devices.length && ' · drag unassigned gear onto the rack'}
               </p>
@@ -944,8 +1033,8 @@ export function RackPlanner({
               onClick={() => setCurrentRacksOpen(true)}
               className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
                 devices.length === 0
-                  ? 'border-2 border-slate-300 bg-white text-[#003366] hover:bg-slate-50'
-                  : 'border border-gray-300 bg-white text-gray-800 hover:bg-gray-50'
+                  ? 'border-2 border-slate-500 bg-slate-800 text-sky-200 hover:bg-slate-700'
+                  : 'border border-slate-500 bg-slate-800 text-slate-200 hover:bg-slate-700'
               }`}
             >
               Current racks
@@ -955,18 +1044,18 @@ export function RackPlanner({
                 <button
                   type="button"
                   onClick={handlePrint}
-                  className="flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-800 transition-colors hover:bg-gray-50"
+                  className="flex items-center gap-2 rounded-lg border border-slate-500 bg-slate-800 px-3 py-2 text-sm font-medium text-slate-200 transition-colors hover:bg-slate-700"
                 >
                   <Printer className="size-4" />
                   Print
                 </button>
                 <button
                   type="button"
-                  onClick={() => void handleExportJpg()}
-                  className="flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-800 transition-colors hover:bg-gray-50"
+                  onClick={() => void handleExportRackPng()}
+                  className="flex items-center gap-2 rounded-lg border border-slate-500 bg-slate-800 px-3 py-2 text-sm font-medium text-slate-200 transition-colors hover:bg-slate-700"
                 >
                   <ImageDown className="size-4" />
-                  Export JPG
+                  Export PNG
                 </button>
                 <button
                   type="button"
@@ -979,7 +1068,7 @@ export function RackPlanner({
                 <button
                   type="button"
                   onClick={() => setShowSettings(!showSettings)}
-                  className="flex items-center gap-2 rounded-lg border-2 border-slate-200 bg-slate-50 px-4 py-2 text-[#003366] transition-colors hover:bg-slate-100"
+                  className="flex items-center gap-2 rounded-lg border-2 border-slate-500 bg-slate-800/80 px-4 py-2 text-sky-200 transition-colors hover:bg-slate-700"
                 >
                   <Settings className="size-5" />
                   Settings
@@ -989,14 +1078,14 @@ export function RackPlanner({
           </div>
         </div>
         {saveError && (
-          <p className="no-print text-sm text-red-600" role="alert">
+          <p className="no-print text-sm text-red-400" role="alert">
             {saveError}
           </p>
         )}
 
         {showSettings && devices.length > 0 && (
-          <div className="no-print overflow-hidden rounded-xl border-2 border-slate-200 bg-white shadow-xl">
-            <div className="border-b border-slate-200 bg-gradient-to-r from-[#003366] to-[#004080] px-6 py-3">
+          <div className="no-print overflow-hidden rounded-xl border-2 border-slate-600 bg-slate-800/95 shadow-xl shadow-black/25">
+            <div className="border-b border-slate-600/80 bg-gradient-to-r from-[#003366] to-[#004080] px-6 py-3">
               <p className="font-cable-display text-xs font-bold uppercase tracking-[0.2em] text-white">
                 Rack settings
               </p>
@@ -1004,70 +1093,85 @@ export function RackPlanner({
                 Dimensions and scale for the diagram and exports
               </p>
             </div>
-            <div className="p-6">
+            <div className="bg-slate-900/40 p-6">
               <RackSizeFields
                 totalHeight={totalHeight}
                 setTotalHeight={setTotalHeight}
-                rackWidthInches={rackWidthInches}
-                setRackWidthInches={setRackWidthInches}
-                inchesPerRU={inchesPerRU}
-                setInchesPerRU={setInchesPerRU}
+                rackDepthInches={rackDepthInches}
+                setRackDepthInches={setRackDepthInches}
                 markRackDirty={markRackDirty}
                 subtitle={null}
                 visual="cable"
                 cableLayout="embedded"
+                nightChrome
               />
             </div>
           </div>
         )}
 
         {devices.length === 0 && (
-          <div className="no-print overflow-hidden rounded-xl border-2 border-slate-200 bg-white shadow-xl">
+          <div className="no-print overflow-hidden rounded-xl border-2 border-slate-600 bg-slate-800/95 shadow-xl shadow-black/25">
             <div className="bg-gradient-to-r from-[#003366] via-[#004080] to-[#003366] px-6 py-8 text-white">
               <h1 className="font-cable-display text-3xl font-bold uppercase tracking-[0.12em] sm:text-4xl sm:tracking-[0.18em]">
                 Build a new rack
               </h1>
               <p className="font-cable-ui mt-4 max-w-2xl text-base leading-relaxed text-white/90 sm:text-lg">
-                Choose rack size below, then import a parts list (CSV) or add devices manually. After gear is in your
-                list, the rack workspace opens and you can drag items into the diagram.
+                Choose rack size below, then import a parts list (CSV or XML) or add devices manually. After gear is in
+                your list, the rack workspace opens and you can drag items into the diagram.
               </p>
             </div>
 
-            <div className="divide-y divide-slate-200">
-              <section className="bg-slate-50/40 px-6 py-8">
+            <div className="divide-y divide-slate-600/80">
+              <section className="bg-slate-900/50 px-6 py-8">
                 <RackSizeFields
                   totalHeight={totalHeight}
                   setTotalHeight={setTotalHeight}
-                  rackWidthInches={rackWidthInches}
-                  setRackWidthInches={setRackWidthInches}
-                  inchesPerRU={inchesPerRU}
-                  setInchesPerRU={setInchesPerRU}
+                  rackDepthInches={rackDepthInches}
+                  setRackDepthInches={setRackDepthInches}
                   markRackDirty={markRackDirty}
                   visual="cable"
                   cableLayout="page"
+                  nightChrome
                 />
               </section>
 
-              <section className="px-6 py-6">
-                <CSVImport
-                  onCsvImportComplete={handleCsvImportComplete}
-                  pendingUnmatchedCount={csvUnmatchedQueue.length}
-                  onReopenCsvReview={() => setCsvReviewOpen(true)}
-                  uiVariant="cable"
-                  showCsvDownload={false}
-                />
-              </section>
-
-              <section className="border-t-4 border-[#CC0000] bg-gradient-to-b from-red-50/90 via-white to-white px-6 py-8 sm:py-10">
-                <h2 className="font-cable-display text-2xl font-black uppercase tracking-[0.12em] text-[#CC0000] sm:text-3xl sm:tracking-[0.16em]">
-                  Or add manually
-                </h2>
-                <p className="font-cable-ui mt-3 max-w-xl text-base text-slate-700">
-                  Add gear without a file — search the catalog or enter a custom device. It appears in the unassigned
-                  list when the rack workspace opens.
-                </p>
-                <div className="mt-6">
-                  <ManualDeviceAdd onAddDevice={handleAddManualDevice} uiVariant="cable" />
+              <section className="bg-slate-900/35 px-6 py-6 lg:py-8">
+                <div className="grid grid-cols-1 gap-8 lg:grid-cols-2 lg:items-stretch lg:gap-10">
+                  <div className="flex h-full min-h-0 min-w-0 flex-col">
+                    <CSVImport
+                      onCsvImportComplete={handleCsvImportComplete}
+                      pendingUnmatchedCount={csvUnmatchedQueue.length}
+                      onReopenCsvReview={() => setCsvReviewOpen(true)}
+                      uiVariant="cable"
+                      showCsvDownload={false}
+                      surface="dark"
+                      dashedPanelExtraClass="min-h-72 flex flex-1 min-h-0 flex-col justify-center"
+                    />
+                  </div>
+                  <div className="flex h-full min-h-0 min-w-0 flex-col border-t border-slate-600/80 pt-8 lg:border-l lg:border-t-0 lg:pl-10 lg:pt-0">
+                    <div className="flex min-h-72 flex-1 flex-col justify-center rounded-xl border-2 border-dashed border-slate-600 bg-slate-800/60 p-8 text-center transition-colors hover:border-slate-500">
+                      <div className="flex flex-col items-center gap-4">
+                        <div className="shrink-0 rounded-full bg-slate-700/80 p-4 shadow-sm">
+                          <Plus className="size-12 text-[#CC0000]" />
+                        </div>
+                        <div className="min-w-0">
+                          <h3 className="font-cable-ui mb-1 font-semibold text-[#ff6b6b]">
+                            Add device manually
+                          </h3>
+                          <p className="font-cable-ui text-sm text-slate-400">
+                            Search the catalog or enter a custom device. It appears in the unassigned list when the
+                            rack workspace opens.
+                          </p>
+                        </div>
+                        <ManualDeviceAdd
+                          onAddDevice={handleAddManualDevice}
+                          uiVariant="cable"
+                          workSurface="rackDark"
+                          landingPrimaryStyle
+                        />
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </section>
             </div>
@@ -1112,14 +1216,14 @@ export function RackPlanner({
           aria-modal="true"
           aria-labelledby="leave-rack-title"
         >
-          <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-2xl">
+          <div className="w-full max-w-md rounded-xl border border-slate-600 bg-slate-800 p-6 shadow-2xl">
             <div className="mb-4 flex items-start gap-3">
-              <AlertTriangle className="mt-0.5 size-6 shrink-0 text-amber-500" aria-hidden />
+              <AlertTriangle className="mt-0.5 size-6 shrink-0 text-amber-400" aria-hidden />
               <div>
-                <h2 id="leave-rack-title" className="text-lg font-semibold text-gray-900">
+                <h2 id="leave-rack-title" className="text-lg font-semibold text-slate-100">
                   Leave rack workspace?
                 </h2>
-                <p className="mt-2 text-sm text-gray-600">
+                <p className="mt-2 text-sm text-slate-400">
                   You have unsaved changes on this rack. Save before leaving, or discard and continue.
                 </p>
               </div>
@@ -1128,7 +1232,7 @@ export function RackPlanner({
               <button
                 type="button"
                 onClick={() => blocker.reset()}
-                className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                className="rounded-lg border border-slate-500 px-4 py-2 text-sm font-medium text-slate-200 hover:bg-slate-700"
               >
                 Stay
               </button>
@@ -1138,7 +1242,7 @@ export function RackPlanner({
                   pendingLeaveAfterSaveRef.current = false;
                   blocker.proceed();
                 }}
-                className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                className="rounded-lg border border-slate-500 px-4 py-2 text-sm font-medium text-slate-200 hover:bg-slate-700"
               >
                 Leave without saving
               </button>
@@ -1191,7 +1295,7 @@ export function RackPlanner({
         onClose={closeCsvAddModal}
         onSaveDevice={handleCsvSaveCustomDevice}
         existingDeviceNames={existingNamesForCsvAdd}
-        prefillName={csvAddPrefillName}
+        csvImportRow={csvAddSnapshot}
       />
 
       {portMismatch && (

@@ -2,7 +2,7 @@ import type { Device } from '../data/equipment';
 import type { RackDevice } from '../types/rack';
 import { getDeviceDisplayName } from './deviceDisplay';
 
-const CATEGORY_MAP: Record<string, Device['category']> = {
+const CATEGORY_MAP: Record<string, string> = {
   Camera: 'Camera',
   Laptop: 'Laptop',
   'Recording Deck': 'Recording Deck',
@@ -18,7 +18,7 @@ const CATEGORY_MAP: Record<string, Device['category']> = {
 /** Map rack rows (CSV/manual categories) to cable-finder device categories. */
 export function normalizeRackDeviceForCableFinder(device: RackDevice): Device {
   const cat = String(device.category);
-  const category = CATEGORY_MAP[cat] ?? 'Interface';
+  const category = (CATEGORY_MAP[cat] ?? 'Interface') as Device['category'];
   const display = getDeviceDisplayName(device);
   return {
     id: device.id,

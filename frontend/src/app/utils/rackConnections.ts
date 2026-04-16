@@ -2,6 +2,7 @@ import { RackDevice, RackConnection } from '../types/rack';
 import { getDeviceDisplayName } from './deviceDisplay';
 import { Port } from '../data/equipment';
 import { findConnection } from './cableFinder';
+import { roundCableLengthInches } from './rackCableMetrics';
 import { ConnectionSpec } from '../components/ConnectionSpecifier';
 
 export function generateRackConnections(
@@ -80,7 +81,7 @@ function createConnectionsBetweenDevices(
       toDevice.heightInU
     );
 
-    const estimatedLength = Math.ceil(distance + slackAllowance);
+    const estimatedLength = roundCableLengthInches(distance + slackAllowance);
 
     // Find cable solution
     const solution = findConnection(fromDevice, toDevice);
@@ -234,7 +235,7 @@ export function exportRackConfiguration(
       output += `   To Port: ${conn.toPort.type}`;
       if (conn.toPort.label) output += ` (${conn.toPort.label})`;
       output += `\n`;
-      output += `   Estimated Length: ${conn.estimatedLength} feet\n`;
+      output += `   Estimated Length: ${roundCableLengthInches(conn.estimatedLength)} feet\n`;
       
       if (conn.adapters && conn.adapters.length > 0) {
         output += `   Adapters Required: ${conn.adapters.join(', ')}\n`;
@@ -268,7 +269,7 @@ export function exportRackConfiguration(
   Object.entries(cablesByType).forEach(([type, lengths]) => {
     output += `  ${type}:\n`;
     lengths.forEach((length, idx) => {
-      output += `    - ${length}ft (Connection ${idx + 1})\n`;
+      output += `    - ${roundCableLengthInches(length)}ft (Connection ${idx + 1})\n`;
     });
   });
 

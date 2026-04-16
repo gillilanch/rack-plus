@@ -6,6 +6,15 @@ export type CsvUnmatchedQueueItem = {
   heightInU: number;
   category: string;
   physicalHeightInches?: number;
+  manufacturer?: string;
+  model?: string;
+  deviceWidthInches?: number;
+  deviceDepthInches?: number;
+  sheetPower?: string;
+  /** Import row had a column header containing this substring (case-insensitive). */
+  sheetHadHeightColumn?: boolean;
+  sheetHadDepthColumn?: boolean;
+  sheetHadWidthColumn?: boolean;
 };
 
 type Props = {

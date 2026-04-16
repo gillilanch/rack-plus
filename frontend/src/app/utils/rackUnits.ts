@@ -4,6 +4,12 @@ export const DEFAULT_INCHES_PER_RU = 1.75;
 /** Typical equipment / front-panel width (19" rack gear). */
 export const DEFAULT_RACK_WIDTH_INCHES = 19;
 
+/** Common cabinet depth (front rail to rear); user-editable in rack settings. */
+export const DEFAULT_RACK_DEPTH_INCHES = 32;
+
+/** Maximum total rack height (U) in the planner UI and API. */
+export const MAX_RACK_HEIGHT_U = 60;
+
 /**
  * Pixel width for the rack face so width:height matches rackWidthInches : (totalHeight × inchesPerRU).
  */

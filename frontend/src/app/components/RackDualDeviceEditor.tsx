@@ -9,6 +9,7 @@ import {
   clampHorizontalOffset,
   DEFAULT_DEVICE_WIDTH_INCHES,
 } from '../utils/rackDevicePlacement';
+import { RackCategoryField } from './RackCategoryField';
 
 const connectorTypes: ConnectorType[] = [
   'HDMI',
@@ -28,32 +29,6 @@ const connectorTypes: ConnectorType[] = [
   'BNC',
   'TS',
 ];
-
-const RACK_CATEGORY_OPTIONS = [
-  'Camera',
-  'Interface',
-  'Monitor',
-  'Audio',
-  'Laptop',
-  'Recording',
-  'Network',
-  'Power',
-  'Other',
-] as const;
-
-function normalizeCategoryForEditor(category: string): string {
-  if (category === 'Recording Deck') return 'Recording';
-  return category;
-}
-
-function categorySelectOptions(current: string): string[] {
-  const display = normalizeCategoryForEditor(current);
-  const base = [...RACK_CATEGORY_OPTIONS];
-  if (!base.includes(display as (typeof RACK_CATEGORY_OPTIONS)[number])) {
-    return [display, ...base];
-  }
-  return base;
-}
 
 function DevicePortSection({
   title,
@@ -97,23 +72,13 @@ function DevicePortSection({
         <h4 className="mb-2 text-sm font-medium text-gray-800">Category & height</h4>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
-            <label className="mb-1 block text-xs font-medium text-gray-600">Category</label>
-            <select
-              value={normalizeCategoryForEditor(editedDevice.category)}
-              onChange={(e) =>
-                setEditedDevice({
-                  ...editedDevice,
-                  category: e.target.value as RackDevice['category'],
-                })
-              }
-              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
-            >
-              {categorySelectOptions(editedDevice.category).map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
+            <RackCategoryField
+              label="Category"
+              showHint={false}
+              value={editedDevice.category}
+              onChange={(cat) => setEditedDevice({ ...editedDevice, category: cat })}
+              inputClassName="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
           </div>
           <div>
             <label className="mb-1 block text-xs font-medium text-gray-600">Rack height (U)</label>

@@ -2,6 +2,12 @@ import express, { Router } from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import { localhostOnly } from '../middleware/localhostOnly';
 import * as rackRepo from '../repos/rackRepo';
+import {
+  syncCatalogFromConfiguredFile,
+  syncCatalogFromConfiguredUrl,
+  syncCatalogFromCsvText,
+  syncCatalogFromGoogleSheet,
+} from '../services/catalogSync';
 
 function requireAdminToken(req: Request, res: Response, next: NextFunction): void {
   const expected = process.env.ADMIN_TOKEN?.trim();
@@ -54,7 +60,13 @@ const adminPageHtml = `<!DOCTYPE html>
   <div class="row">
     <button type="button" id="reload">Refresh list</button>
     <button type="button" class="warn" id="restart">Restart backend</button>
+    <button type="button" id="syncCatalog">Sync catalog (local CSV → DB)</button>
+    <button type="button" id="syncCatalogUrl">Sync catalog (CSV URL → DB)</button>
+    <button type="button" id="syncCatalogUrlPrune">Sync CSV URL + delete removed rows</button>
+    <button type="button" id="syncGoogle">Sync catalog (live Google Sheet → DB)</button>
   </div>
+  <p class="muted">Local CSV: <code>FOX_CATALOG_CSV_PATH</code> or the default AVCAD file. <strong>Without Google Cloud:</strong> set <code>FOX_CATALOG_CSV_URL</code> to a CSV URL or a normal Sheet link (<code>…/spreadsheets/d/…/edit…</code>) — the server uses Google’s CSV export URL. If you do <em>not</em> set fetch headers, that path needs <strong>Anyone with the link can view</strong>. For a <strong>private</strong> CSV URL (presigned object store, internal API), set <code>FOX_CATALOG_CSV_FETCH_AUTHORIZATION</code> (full header value, e.g. <code>Bearer …</code>) and/or <code>FOX_CATALOG_CSV_FETCH_HEADERS_JSON</code> (one JSON object: string keys → string values). <strong>Private sheet, no public link:</strong> <code>POST /api/catalog/sync-webhook</code> with the CSV as the body and <code>x-catalog-webhook-secret</code> equal to <code>CATALOG_WEBHOOK_SECRET</code> (e.g. Apps Script on a timer). Rows removed from the source stay in Postgres until <strong>Sync CSV URL + delete removed rows</strong> or <code>FOX_CATALOG_PRUNE_ON_SYNC=1</code>.</p>
+  <p class="muted"><strong>Google Sheet API (optional):</strong> <code>GOOGLE_SHEETS_SPREADSHEET_ID</code>, <code>GOOGLE_SERVICE_ACCOUNT_JSON</code> (or <code>GOOGLE_APPLICATION_CREDENTIALS</code>), optional <code>GOOGLE_SHEETS_RANGE</code>. Share the sheet with the service account (Viewer). Poll with <code>FOX_CATALOG_SYNC_INTERVAL_MS</code> (≥ 15000 ms). Webhook pull (only when Sheet API is configured): <code>POST /api/catalog/sync-google-webhook</code> with <code>x-catalog-webhook-secret</code>. Served at <code>/api/catalog/devices</code>.</p>
   <p class="muted">Restart exits the Node process. Use launchd with KeepAlive or PM2 so it comes back; plain <code>npm start</code> in Terminal will stay down until you start it again.</p>
   <div class="row">
     <input type="text" id="deleteAllConfirm" placeholder="Type DELETE_ALL_RACKS to enable wipe" autocomplete="off" />
@@ -123,6 +135,103 @@ const adminPageHtml = `<!DOCTYPE html>
       load();
     }
     document.getElementById('reload').onclick = load;
+    function catalogSyncMsg(j, extra) {
+      const pr = j.pruned != null && j.pruned > 0 ? ' Removed ' + j.pruned + ' DB row(s) no longer in the sheet.' : '';
+      return extra + pr;
+    }
+    document.getElementById('syncCatalog').onclick = async () => {
+      if (!confirm('Upsert all rows from the configured CSV file into the database?')) return;
+      setMsg('');
+      const r = await fetch(prefix + '/catalog/sync', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ source: 'file', prune: false }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (r.status === 401) { setMsg('401 Unauthorized', 'err'); return; }
+      if (!r.ok) { setMsg(j.error || 'Sync failed: ' + r.status, 'err'); return; }
+      setMsg(
+        catalogSyncMsg(
+          j,
+          'Catalog sync OK — ' +
+            (j.sheetRowsParsed != null ? j.sheetRowsParsed + ' sheet row(s) parsed, ' : '') +
+            'upserted ' +
+            (j.upserted ?? '?') +
+            ' time(s) from ' +
+            (j.source || 'file') +
+            ' (same Manufacturer+Model updates the same DB row; last row wins).',
+        ),
+        'ok',
+      );
+    };
+    document.getElementById('syncCatalogUrl').onclick = async () => {
+      if (!confirm('Fetch FOX_CATALOG_CSV_URL and upsert into the database?')) return;
+      setMsg('');
+      const r = await fetch(prefix + '/catalog/sync', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ source: 'url', prune: false }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (r.status === 401) { setMsg('401 Unauthorized', 'err'); return; }
+      if (!r.ok) { setMsg(j.error || 'Sync failed: ' + r.status, 'err'); return; }
+      setMsg(
+        catalogSyncMsg(
+          j,
+          'CSV URL sync OK — ' +
+            (j.sheetRowsParsed != null ? j.sheetRowsParsed + ' sheet row(s) parsed, ' : '') +
+            'upserted ' +
+            (j.upserted ?? '?') +
+            ' time(s).',
+        ),
+        'ok',
+      );
+    };
+    document.getElementById('syncCatalogUrlPrune').onclick = async () => {
+      if (!confirm('Fetch CSV URL, upsert, AND delete Postgres catalog rows that are NOT in this sheet anymore? (Use when you removed joke rows.)')) return;
+      setMsg('');
+      const r = await fetch(prefix + '/catalog/sync', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ source: 'url', prune: true }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (r.status === 401) { setMsg('401 Unauthorized', 'err'); return; }
+      if (!r.ok) { setMsg(j.error || 'Sync failed: ' + r.status, 'err'); return; }
+      setMsg(
+        catalogSyncMsg(
+          j,
+          'CSV URL sync + prune OK — ' +
+            (j.sheetRowsParsed != null ? j.sheetRowsParsed + ' sheet row(s) parsed, ' : '') +
+            'upserted ' +
+            (j.upserted ?? '?') +
+            ' time(s).',
+        ),
+        'ok',
+      );
+    };
+    document.getElementById('syncGoogle').onclick = async () => {
+      if (!confirm('Pull the live Google Sheet and upsert into the database?')) return;
+      setMsg('');
+      const r = await fetch(prefix + '/catalog/sync', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ source: 'google', prune: false }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (r.status === 401) { setMsg('401 Unauthorized', 'err'); return; }
+      if (!r.ok) { setMsg(j.error || String(j.message || 'Sync failed: ' + r.status), 'err'); return; }
+      setMsg(
+        'Google Sheet sync OK — ' +
+          (j.sheetRowsParsed != null ? j.sheetRowsParsed + ' sheet row(s) parsed, ' : '') +
+          'upserted ' +
+          (j.upserted ?? '?') +
+          ' time(s). ' +
+          (j.source || '') +
+          ' (unique devices = distinct Manufacturer+Model; duplicates update the same row).',
+        'ok',
+      );
+    };
     document.getElementById('restart').onclick = async () => {
       if (!confirm('Restart backend now?')) return;
       setMsg('');
@@ -175,6 +284,7 @@ api.get('/racks', async (_req, res, next) => {
         name: r.name,
         totalHeight: r.totalHeightU,
         rackWidthInches: r.rackWidthInches,
+        rackDepthInches: r.rackDepthInches,
         deviceCount: r._count.devices,
         updatedAt: r.updatedAt.toISOString(),
         savedByDisplayName: r.savedByDisplayName,
@@ -216,6 +326,40 @@ api.post('/racks/delete-all', async (req, res, next) => {
 api.post('/restart', (_req, res) => {
   setTimeout(() => process.exit(0), 750);
   res.json({ ok: true, message: 'Exiting; supervisor should restart the process.' });
+});
+
+api.post('/catalog/sync', async (req, res, next) => {
+  try {
+    const body = req.body as {
+      prune?: boolean;
+      csvText?: string;
+      source?: 'file' | 'url' | 'google';
+    };
+    const prune = !!body?.prune;
+    if (typeof body?.csvText === 'string' && body.csvText.trim()) {
+      const result = await syncCatalogFromCsvText(body.csvText, { pruneMissing: prune });
+      res.json({ ok: true, ...result, source: 'inline' });
+      return;
+    }
+    if (body?.source === 'google') {
+      const result = await syncCatalogFromGoogleSheet({ pruneMissing: prune });
+      res.json({ ok: true, ...result });
+      return;
+    }
+    if (body?.source === 'url') {
+      const result = await syncCatalogFromConfiguredUrl({ pruneMissing: prune });
+      res.json({ ok: true, ...result });
+      return;
+    }
+    const result = await syncCatalogFromConfiguredFile({ pruneMissing: prune });
+    res.json({ ok: true, ...result });
+  } catch (e) {
+    if (e instanceof Error) {
+      res.status(400).json({ error: e.message });
+      return;
+    }
+    next(e);
+  }
 });
 
 adminRouter.use('/api', express.json(), api);

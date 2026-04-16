@@ -9,6 +9,7 @@ import {
   clampHorizontalOffset,
   DEFAULT_DEVICE_WIDTH_INCHES,
 } from '../utils/rackDevicePlacement';
+import { RackCategoryField } from './RackCategoryField';
 
 interface RackDeviceEditorProps {
   device: RackDevice | null;
@@ -27,33 +28,6 @@ const connectorTypes: ConnectorType[] = [
   '3.5mm', '1/4 TRS', 'RCA', 'DisplayPort', 'Mini DisplayPort',
   'DVI', 'VGA', 'Ethernet', 'BNC', 'TS',
 ];
-
-/** Matches ManualDeviceAdd; rack rows often store these display labels (not only Device['category']). */
-const RACK_CATEGORY_OPTIONS = [
-  'Camera',
-  'Interface',
-  'Monitor',
-  'Audio',
-  'Laptop',
-  'Recording',
-  'Network',
-  'Power',
-  'Other',
-] as const;
-
-function normalizeCategoryForEditor(category: string): string {
-  if (category === 'Recording Deck') return 'Recording';
-  return category;
-}
-
-function categorySelectOptions(current: string): string[] {
-  const display = normalizeCategoryForEditor(current);
-  const base = [...RACK_CATEGORY_OPTIONS];
-  if (!base.includes(display as (typeof RACK_CATEGORY_OPTIONS)[number])) {
-    return [display, ...base];
-  }
-  return base;
-}
 
 export function RackDeviceEditor({
   device,
@@ -74,13 +48,7 @@ export function RackDeviceEditor({
   const [editedDevice, setEditedDevice] = useState<RackDevice | null>(null);
 
   useEffect(() => {
-    if (device) {
-      const d = { ...device };
-      if (d.category === 'Recording Deck') {
-        (d as RackDevice).category = 'Recording' as RackDevice['category'];
-      }
-      setEditedDevice(d);
-    }
+    if (device) setEditedDevice({ ...device });
   }, [device]);
 
   if (!isOpen || !editedDevice) return null;
@@ -130,6 +98,9 @@ export function RackDeviceEditor({
       name,
       deviceWidthInches: widthClamped,
       horizontalOffsetInches: offClamped,
+      deviceDepthInches: editedDevice.deviceDepthInches,
+      sheetPower: editedDevice.sheetPower?.trim() ? editedDevice.sheetPower.trim() : undefined,
+      deviceNotes: editedDevice.deviceNotes?.trim() ? editedDevice.deviceNotes.trim() : undefined,
     };
     const ok = onSave(payload);
     if (ok !== false) onClose();
@@ -188,26 +159,14 @@ export function RackDeviceEditor({
             <h3 className="mb-3 text-sm font-medium text-gray-800">Category & height</h3>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>
-                <label htmlFor="rack-edit-category" className="mb-1 block text-xs font-medium text-gray-600">
-                  Category
-                </label>
-                <select
+                <RackCategoryField
                   id="rack-edit-category"
-                  value={normalizeCategoryForEditor(editedDevice.category)}
-                  onChange={(e) =>
-                    setEditedDevice({
-                      ...editedDevice,
-                      category: e.target.value as RackDevice['category'],
-                    })
-                  }
-                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  {categorySelectOptions(editedDevice.category).map((c) => (
-                    <option key={c} value={c}>
-                      {c}
-                    </option>
-                  ))}
-                </select>
+                  label="Category"
+                  showHint={false}
+                  value={editedDevice.category}
+                  onChange={(cat) => setEditedDevice({ ...editedDevice, category: cat })}
+                  inputClassName="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
               </div>
               <div>
                 <label htmlFor="rack-edit-u" className="mb-1 block text-xs font-medium text-gray-600">
@@ -334,6 +293,74 @@ export function RackDeviceEditor({
             </div>
           </div>
 
+          <div className="mb-6 rounded-lg border border-gray-200 bg-gray-50/80 p-4">
+            <h3 className="mb-3 text-sm font-medium text-gray-800">Power, depth & notes</h3>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <label htmlFor="rack-edit-depth" className="mb-1 block text-xs font-medium text-gray-600">
+                  Face depth (inches)
+                </label>
+                <input
+                  id="rack-edit-depth"
+                  type="number"
+                  min={0}
+                  max={120}
+                  step={0.25}
+                  value={editedDevice.deviceDepthInches ?? ''}
+                  onChange={(e) => {
+                    const raw = e.target.value.trim();
+                    if (raw === '') {
+                      setEditedDevice({ ...editedDevice, deviceDepthInches: undefined });
+                      return;
+                    }
+                    const n = parseFloat(raw);
+                    if (!Number.isNaN(n) && n >= 0) {
+                      setEditedDevice({ ...editedDevice, deviceDepthInches: n });
+                    }
+                  }}
+                  placeholder="Optional"
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              <div>
+                <label htmlFor="rack-edit-power" className="mb-1 block text-xs font-medium text-gray-600">
+                  Power (sheet / PSU)
+                </label>
+                <input
+                  id="rack-edit-power"
+                  type="text"
+                  value={editedDevice.sheetPower ?? ''}
+                  onChange={(e) =>
+                    setEditedDevice({
+                      ...editedDevice,
+                      sheetPower: e.target.value.trim() ? e.target.value : undefined,
+                    })
+                  }
+                  placeholder="Optional"
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              <div className="sm:col-span-2">
+                <label htmlFor="rack-edit-notes" className="mb-1 block text-xs font-medium text-gray-600">
+                  Notes
+                </label>
+                <textarea
+                  id="rack-edit-notes"
+                  rows={3}
+                  value={editedDevice.deviceNotes ?? ''}
+                  onChange={(e) =>
+                    setEditedDevice({
+                      ...editedDevice,
+                      deviceNotes: e.target.value.trim() ? e.target.value : undefined,
+                    })
+                  }
+                  placeholder="Optional — e.g. catalog description or site-specific detail"
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+            </div>
+          </div>
+
           {/* Ports Configuration */}
           <div className="mb-6">
             <div className="flex items-center justify-between mb-3">
@@ -360,11 +387,11 @@ export function RackDeviceEditor({
                     key={index}
                     className="flex gap-2 items-start p-3 bg-gray-50 rounded-lg border border-gray-200"
                   >
-                    <div className="flex-1 grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <div className="flex-1 grid grid-cols-1 gap-2 sm:grid-cols-4">
                       {/* Port Type */}
                       <select
                         value={port.type}
-                        onChange={(e) => handlePortChange(index, 'type', e.target.value)}
+                        onChange={(e) => handlePortChange(index, 'type', e.target.value as ConnectorType)}
                         className="px-3 py-2 border border-gray-300 rounded bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                       >
                         {connectorTypes.map((type) => (
@@ -377,13 +404,35 @@ export function RackDeviceEditor({
                       {/* Direction */}
                       <select
                         value={port.direction}
-                        onChange={(e) => handlePortChange(index, 'direction', e.target.value)}
+                        onChange={(e) =>
+                          handlePortChange(index, 'direction', e.target.value as Port['direction'])
+                        }
                         className="px-3 py-2 border border-gray-300 rounded bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                       >
                         <option value="input">Input</option>
                         <option value="output">Output</option>
                         <option value="both">Both</option>
                       </select>
+
+                      <input
+                        type="number"
+                        min={1}
+                        max={999}
+                        value={port.count && port.count > 1 ? port.count : ''}
+                        onChange={(e) => {
+                          const raw = e.target.value.trim();
+                          if (raw === '') {
+                            handlePortChange(index, 'count', undefined);
+                            return;
+                          }
+                          const n = parseInt(raw, 10);
+                          if (!Number.isNaN(n) && n >= 1) {
+                            handlePortChange(index, 'count', n <= 1 ? undefined : n);
+                          }
+                        }}
+                        placeholder="Count"
+                        className="min-w-0 px-3 py-2 border border-gray-300 rounded bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
 
                       {/* Label */}
                       <input

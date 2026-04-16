@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { X, Loader2, FolderOpen, BadgeCheck } from 'lucide-react';
 import { listRacks, type RackSummary } from '../api/racks';
+import { DEFAULT_RACK_DEPTH_INCHES } from '../utils/rackUnits';
 import { formatDistanceToNow } from 'date-fns';
 
 /* should  */
@@ -94,8 +95,8 @@ export function CurrentRacksModal({ isOpen, onClose, currentRackId, onOpenRack }
                           </span>
                         </div>
                         <div className="text-xs text-gray-500">
-                          {r.deviceCount} device{r.deviceCount !== 1 ? 's' : ''} · {r.totalHeight}U ×{' '}
-                          {r.rackWidthInches}&quot; ·{' '}
+                          {r.deviceCount} device{r.deviceCount !== 1 ? 's' : ''} on rack · {r.totalHeight}U ·{' '}
+                          {r.rackDepthInches ?? DEFAULT_RACK_DEPTH_INCHES}&quot; deep ·{' '}
                           {r.savedByDisplayName?.trim() ? (
                             <>by {r.savedByDisplayName}</>
                           ) : (

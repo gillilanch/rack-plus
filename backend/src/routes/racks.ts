@@ -16,6 +16,7 @@ racksRouter.get('/', async (_req, res, next) => {
         name: r.name,
         totalHeight: r.totalHeightU,
         rackWidthInches: r.rackWidthInches,
+        rackDepthInches: r.rackDepthInches,
         deviceCount: r._count.devices,
         updatedAt: r.updatedAt.toISOString(),
         savedByDisplayName: r.savedByDisplayName,

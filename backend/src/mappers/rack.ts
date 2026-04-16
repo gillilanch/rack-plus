@@ -36,6 +36,7 @@ export function toRackConfiguration(rack: RackWithDevices) {
     totalHeight: rack.totalHeightU,
     inchesPerRU: rack.inchesPerRU,
     rackWidthInches: rack.rackWidthInches,
+    rackDepthInches: rack.rackDepthInches,
     slackAllowance: rack.slackAllowance,
     connections,
     devices: devicesSorted.map((d) => ({
@@ -48,6 +49,9 @@ export function toRackConfiguration(rack: RackWithDevices) {
       rackPosition: d.rackPosition ?? undefined,
       physicalHeightInches: d.physicalHeightInches ? Number(d.physicalHeightInches) : undefined,
       deviceWidthInches: d.deviceWidthInches,
+      deviceDepthInches: d.deviceDepthInches != null ? Number(d.deviceDepthInches) : undefined,
+      sheetPower: d.sheetPower ?? undefined,
+      deviceNotes: d.deviceNotes ?? undefined,
       horizontalOffsetInches: d.horizontalOffsetInches,
       ports: d.ports
         .slice()
@@ -77,6 +81,8 @@ export type NestedRackDeviceCreate = {
   rackPosition: number | null;
   physicalHeightInches: number | null;
   deviceWidthInches: number;
+  deviceDepthInches: number | null;
+  sheetPower: string | null;
   horizontalOffsetInches: number;
   catalogDeviceId: string | null;
   sortOrder: number;
@@ -101,7 +107,16 @@ export function buildNestedDevices(
     rackPosition: dev.rackPosition ?? null,
     physicalHeightInches:
       dev.physicalHeightInches !== undefined ? dev.physicalHeightInches : null,
-    deviceWidthInches: dev.deviceWidthInches ?? 19,
+    deviceWidthInches:
+      dev.deviceWidthInches !== undefined && dev.deviceWidthInches !== null
+        ? dev.deviceWidthInches
+        : 19,
+    deviceDepthInches:
+      dev.deviceDepthInches !== undefined && dev.deviceDepthInches !== null
+        ? dev.deviceDepthInches
+        : null,
+    sheetPower: dev.sheetPower?.trim() ? dev.sheetPower.trim() : null,
+    deviceNotes: dev.deviceNotes?.trim() ? dev.deviceNotes.trim() : null,
     horizontalOffsetInches: dev.horizontalOffsetInches ?? 0,
     catalogDeviceId: catalogIdFromDeviceId(dev.id),
     sortOrder: index,

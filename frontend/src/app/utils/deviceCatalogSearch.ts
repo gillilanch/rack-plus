@@ -2,9 +2,10 @@ import type { Device } from '../data/equipment';
 import { devices as builtInDevices } from '../data/equipment';
 import { getDeviceSearchBlob } from './deviceDisplay';
 import { getCustomDevices } from './customDevices';
+import { getServerCatalogDevices } from './serverCatalogCache';
 
 export function mergeBuiltInAndCustomDevices(): Device[] {
-  return [...builtInDevices, ...getCustomDevices()];
+  return [...builtInDevices, ...getCustomDevices(), ...getServerCatalogDevices()];
 }
 
 function levenshtein(a: string, b: string): number {
@@ -87,6 +88,18 @@ export function findExactDeviceByName(name: string, pool: Device[]): Device | un
   });
 }
 
+/** O(1) exact lookup for CSV import (name or "manufacturer model" lower key). */
+export function buildDeviceExactLookup(pool: Device[]): Map<string, Device> {
+  const idx = new Map<string, Device>();
+  for (const d of pool) {
+    idx.set(d.name.trim().toLowerCase(), d);
+    const m = (d.manufacturer ?? '').trim().toLowerCase();
+    const md = (d.model ?? '').trim().toLowerCase();
+    if (m && md) idx.set(`${m} ${md}`, d);
+  }
+  return idx;
+}
+
 /**
  * Map a parts-list / CSV row name to a built-in or Fox device when confident enough.
  * Uses exact name first, then the same ranking as manual-add autocomplete with a fuzzy floor
@@ -95,16 +108,30 @@ export function findExactDeviceByName(name: string, pool: Device[]): Device | un
 export function resolvePartsNameToCatalogDevice(
   partsName: string,
   pool: Device[],
+  exactLookup?: Map<string, Device>,
 ): { device: Device; match: 'exact' | 'fuzzy' } | null {
   const trimmed = partsName.trim();
   if (!trimmed) return null;
 
-  const exact = findExactDeviceByName(trimmed, pool);
+  const t = trimmed.toLowerCase();
+  const exact = exactLookup?.get(t) ?? findExactDeviceByName(trimmed, pool);
   if (exact) return { device: exact, match: 'exact' };
 
   if (trimmed.length < 2) return null;
 
-  const ranked = pool
+  let fuzzyPool = pool;
+  if (pool.length > 120) {
+    const prefix = t.slice(0, Math.min(4, t.length));
+    if (prefix.length >= 2) {
+      const narrowed = pool.filter((d) => {
+        const blob = getDeviceSearchBlob(d).toLowerCase();
+        return blob.includes(prefix) || d.name.toLowerCase().includes(prefix);
+      });
+      if (narrowed.length > 0) fuzzyPool = narrowed;
+    }
+  }
+
+  const ranked = fuzzyPool
     .map((d) => ({ d, s: deviceMatchScore(trimmed, d) }))
     .filter((x) => x.s > 0)
     .sort((a, b) => b.s - a.s);
@@ -120,23 +147,32 @@ export function resolvePartsNameToCatalogDevice(
 
 
 /*can delete LABELS later */
-export function manualCategoryToDeviceCategory(manual: string): Device['category'] {
-  const map: Record<string, Device['category']> = {
-    Camera: 'Camera',
-    Laptop: 'Laptop',
-    Recording: 'Recording Deck',
-    'Recording Deck': 'Recording Deck',
-    Audio: 'Audio',
-    Monitor: 'Monitor',
-    Interface: 'Interface',
-    Network: 'Interface',
-    Power: 'Interface',
-    Other: 'Interface',
+/** Legacy rack labels → canonical string; otherwise pass through. */
+export function manualCategoryToDeviceCategory(manual: string): string {
+  const t = manual.trim();
+  if (!t) return 'Other';
+  const legacy: Record<string, string> = {
+    Recording: 'Recording',
+    'Recording Deck': 'Recording',
   };
-  return map[manual] ?? 'Interface';
+  return legacy[t] ?? t;
 }
 
-export function deviceCategoryToManualLabel(cat: Device['category']): string {
+export function deviceCategoryToManualLabel(cat: string): string {
   if (cat === 'Recording Deck') return 'Recording';
   return cat;
+}
+
+/**
+ * Use sheet category on the device: match DB list case-insensitively (canonical spelling),
+ * otherwise keep the sheet text (not forced to Other). Empty → Other.
+ */
+export function resolveImportCategory(sheetCategory: string, dbNames: string[]): string {
+  const t = sheetCategory.trim();
+  if (!t) return 'Other';
+  const lower = t.toLowerCase();
+  for (const n of dbNames) {
+    if (n.trim().toLowerCase() === lower) return n.trim();
+  }
+  return t;
 }

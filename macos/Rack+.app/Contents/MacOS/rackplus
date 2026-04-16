@@ -13,14 +13,14 @@ LOG_OUT="$SUPPORT_DIR/backend.out.log"
 LOG_ERR="$SUPPORT_DIR/backend.err.log"
 
 load_backend_env() {
-  PORT="${PORT:-4000}"
+  PORT="${PORT:-4001}"
   if [[ -f "$BACKEND_DIR/.env" ]]; then
     set -a
     # shellcheck source=/dev/null
     source "$BACKEND_DIR/.env" 2>/dev/null || true
     set +a
   fi
-  PORT="${PORT:-4000}"
+  PORT="${PORT:-4001}"
 }
 
 alert() {

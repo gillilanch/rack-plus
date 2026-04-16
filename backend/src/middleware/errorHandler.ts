@@ -13,12 +13,28 @@ export function errorHandler(err: unknown, _req: Request, res: Response, _next: 
       res.status(404).json({ error: 'Not found' });
       return;
     }
-    // Common after pulling code before `npx prisma migrate deploy`
-    if (err.code === 'P2022' || err.message.includes('does not exist')) {
+    // Table/column missing (P2021 table, P2022 column) or similar — usually migrations not applied
+    const schemaCodes = new Set(['P2021', 'P2022', 'P2010']);
+    if (
+      schemaCodes.has(err.code) ||
+      /does not exist/i.test(err.message) ||
+      /relation .+ does not exist/i.test(err.message)
+    ) {
       console.error(err);
       res.status(500).json({
         error:
-          'Database schema is out of date. On the server run: cd backend && npx prisma migrate deploy',
+          'Database schema is out of date. From the backend folder run: npx prisma migrate deploy',
+      });
+      return;
+    }
+  }
+  if (err instanceof Prisma.PrismaClientUnknownRequestError) {
+    const msg = err.message;
+    if (/does not exist|relation .+ does not exist|fox_employee_extra/i.test(msg)) {
+      console.error(err);
+      res.status(500).json({
+        error:
+          'Database schema is out of date. From the backend folder run: npx prisma migrate deploy',
       });
       return;
     }

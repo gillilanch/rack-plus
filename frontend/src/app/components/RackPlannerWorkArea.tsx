@@ -1,11 +1,10 @@
 import type { Ref } from 'react';
-import type { Port } from '../data/equipment';
 import type { RackConnection, RackDevice } from '../types/rack';
 import { CSVImport, type CsvImportCompletePayload, type CsvRackExportContext } from './CSVImport';
-import { ManualDeviceAdd } from './ManualDeviceAdd';
+import { ManualDeviceAdd, type ManualAddDevicePayload } from './ManualDeviceAdd';
 import { RackCableConnectionsPanel } from './RackCableConnectionsPanel';
 import { DEFAULT_RACK_WIDTH_INCHES } from '../utils/rackUnits';
-import { RackVisualizer } from './RackVisualizer';
+import { RackVisualizer, type RackPortMismatchPayload } from './RackVisualizer';
 import { UnassignedDevices } from './UnassignedDevices';
 
 /**
@@ -22,16 +21,7 @@ export function RackDevicesColumn(props: {
   pendingCsvUnmatchedCount?: number;
   onReopenCsvReview?: () => void;
   rackExportContext?: CsvRackExportContext;
-  onAddManualDevice: (data: {
-    manufacturer: string;
-    model: string;
-    name: string;
-    category: string;
-    heightInU: number;
-    heightInches?: number;
-    deviceWidthInches?: number;
-    ports?: Port[];
-  }) => void;
+  onAddManualDevice: (data: ManualAddDevicePayload) => void;
 }) {
   const {
     devices,
@@ -46,8 +36,8 @@ export function RackDevicesColumn(props: {
     onAddManualDevice,
   } = props;
   return (
-    <section className="flex h-full min-h-0 flex-col gap-6 rounded-xl border-2 border-slate-200 bg-white p-6 shadow-xl [contain:layout]">
-      <div className="min-h-[10rem] shrink-0 rounded-lg border border-gray-100 bg-slate-50/70 p-2 lg:min-h-0 lg:flex-1 lg:overflow-hidden">
+    <section className="flex h-full min-h-0 flex-col gap-6 rounded-xl border-2 border-slate-600/90 bg-slate-800/95 p-6 shadow-xl shadow-black/25 [contain:layout]">
+      <div className="min-h-[10rem] shrink-0 rounded-lg border border-slate-600/80 bg-slate-900/50 p-2 lg:min-h-0 lg:flex-1 lg:overflow-hidden">
         <UnassignedDevices
           devices={devices}
           rackWidthInches={rackWidthInches}
@@ -56,21 +46,22 @@ export function RackDevicesColumn(props: {
           onReturnFromRack={onReturnFromRack}
         />
       </div>
-      <div className="shrink-0 border-t border-slate-200 pt-6">
-        <h3 className="mb-4 text-xs font-bold uppercase tracking-[0.2em] text-[#CC0000]">Add more devices</h3>
+      <div className="shrink-0 border-t border-slate-600/80 pt-6">
+        <h3 className="mb-4 text-xs font-bold uppercase tracking-[0.2em] text-[#f87171]">Add more devices</h3>
         <CSVImport
           onCsvImportComplete={onCsvImportComplete}
           pendingUnmatchedCount={pendingCsvUnmatchedCount}
           onReopenCsvReview={onReopenCsvReview}
           rackExportContext={rackExportContext}
           uiVariant="cable"
+          surface="dark"
         />
       </div>
-      <div className="shrink-0 border-t border-gray-100 pt-6">
-        <h3 className="mb-4 text-xs font-bold uppercase tracking-[0.2em] text-[#CC0000]">
+      <div className="shrink-0 border-t border-slate-600/80 pt-6">
+        <h3 className="mb-4 text-xs font-bold uppercase tracking-[0.2em] text-[#f87171]">
           Add a device manually
         </h3>
-        <ManualDeviceAdd onAddDevice={onAddManualDevice} uiVariant="cable" />
+        <ManualDeviceAdd onAddDevice={onAddManualDevice} uiVariant="cable" workSurface="rackDark" />
       </div>
       <RackCableConnectionsPanel devices={devices} />
     </section>
@@ -90,17 +81,17 @@ export function RackPreviewColumn(props: {
   connections?: RackConnection[];
   slackAllowanceFeet?: number;
   onAddConnection?: (c: RackConnection) => void;
-  onPortMismatch?: (p: { from: RackDevice; to: RackDevice; extraSlackInches: number }) => void;
+  onPortMismatch?: (p: RackPortMismatchPayload) => void;
   onRemoveConnection?: (connectionId: string) => void;
 }) {
   const rw = props.rackWidthInches ?? DEFAULT_RACK_WIDTH_INCHES;
   return (
-    <section className="rack-preview-column flex min-h-[min(60vh,22rem)] flex-col rounded-xl border-2 border-slate-200 bg-white p-6 shadow-xl lg:h-full lg:min-h-0 [contain:layout]">
-      <div className="mb-3 shrink-0 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950">
+    <section className="rack-preview-column flex min-h-[min(60vh,22rem)] flex-col rounded-xl border-2 border-slate-600/90 bg-slate-800/95 p-6 shadow-xl shadow-black/25 lg:h-full lg:min-h-0 [contain:layout]">
+      <div className="mb-3 shrink-0 rounded-lg border border-amber-600/50 bg-amber-950/35 px-3 py-2 text-xs text-amber-100">
         <strong>Rack {rw}&quot; wide.</strong> Gear on the same U shares that space: total device widths must stay ≤ {rw}
         &quot; and boxes must not overlap. Open a device with the pencil to set width and left offset.
       </div>
-      <div className="flex min-h-0 flex-1 flex-col">
+      <div className="rack-diagram-stage flex min-h-0 flex-1 flex-col rounded-xl border border-slate-600/35 bg-slate-900/25 p-2 shadow-inner shadow-black/20 ring-1 ring-slate-600/20 sm:p-3 print:border-slate-400 print:bg-slate-100">
         <RackVisualizer
           fillParent
           totalHeight={props.totalHeight}
@@ -135,21 +126,12 @@ export function RackPlannerWorkArea(props: {
   pendingCsvUnmatchedCount?: number;
   onReopenCsvReview?: () => void;
   rackExportContext?: CsvRackExportContext;
-  onAddManualDevice: (data: {
-    manufacturer: string;
-    model: string;
-    name: string;
-    category: string;
-    heightInU: number;
-    heightInches?: number;
-    deviceWidthInches?: number;
-    ports?: Port[];
-  }) => void;
+  onAddManualDevice: (data: ManualAddDevicePayload) => void;
   onUpdateDevicePosition: (deviceId: string, position: number, horizontalOffsetInches?: number) => void;
   connections?: RackConnection[];
   slackAllowanceFeet?: number;
   onAddConnection?: (c: RackConnection) => void;
-  onPortMismatch?: (p: { from: RackDevice; to: RackDevice; extraSlackInches: number }) => void;
+  onPortMismatch?: (p: RackPortMismatchPayload) => void;
   onRemoveConnection?: (connectionId: string) => void;
 }) {
   return (

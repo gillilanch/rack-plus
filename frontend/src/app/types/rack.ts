@@ -6,6 +6,12 @@ export interface RackDevice extends Device {
   physicalHeightInches?: number; // Original height in inches
   /** Front-panel width in inches; default 19. Used with rack width for side-by-side placement. */
   deviceWidthInches?: number;
+  /** Face / equipment depth from sheet import (inches); 0 means unset in UI. */
+  deviceDepthInches?: number;
+  /** Power line from sheet import (documentation). */
+  sheetPower?: string;
+  /** Freeform notes (catalog / user). */
+  deviceNotes?: string;
   /** Inches from left rail; default 0. */
   horizontalOffsetInches?: number;
 }
@@ -46,6 +52,8 @@ export interface RackConfiguration {
   inchesPerRU?: number;
   /** Front-panel / rail width in inches (typical 19"). */
   rackWidthInches?: number;
+  /** Cabinet depth in inches (front to rear). */
+  rackDepthInches?: number;
   slackAllowance: number; // Additional cable length in feet
   devices: RackDevice[];
   connections: RackConnection[];

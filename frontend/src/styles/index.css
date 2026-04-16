@@ -19,5 +19,16 @@
   .rack-planner-print-area {
     max-width: 100% !important;
   }
+  .rack-workspace-root {
+    background: #0f172a !important;
+  }
+  .rack-workspace-root > .rack-workspace-grid-overlay {
+    display: none !important;
+  }
+  .rack-diagram-stage {
+    background: #e2e8f0 !important;
+    border-color: #94a3b8 !important;
+    box-shadow: none !important;
+  }
 }
 

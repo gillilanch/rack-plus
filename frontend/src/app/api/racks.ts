@@ -1,7 +1,8 @@
 import type { RackConfiguration } from '../types/rack';
 import { normalizeRackDeviceIdentity } from '../utils/deviceDisplay';
+import { apiUrl } from './apiUrl';
 
-const BASE = '/api/racks';
+const pathRacks = '/api/racks';
 
 function normalizeConfigDevices(config: RackConfiguration): RackConfiguration {
   return {
@@ -15,6 +16,8 @@ export type RackSummary = {
   name: string;
   totalHeight: number;
   rackWidthInches: number;
+  /** Present after API / DB support rack depth; older responses may omit. */
+  rackDepthInches?: number;
   deviceCount: number;
   updatedAt: string;
   savedByDisplayName?: string | null;
@@ -39,12 +42,12 @@ async function handleJson<T>(res: Response): Promise<T> {
 }
 
 export async function listRacks(): Promise<RackSummary[]> {
-  const res = await fetch(BASE);
+  const res = await fetch(apiUrl(pathRacks));
   return handleJson(res);
 }
 
 export async function getRack(id: string): Promise<RackConfiguration> {
-  const res = await fetch(`${BASE}/${encodeURIComponent(id)}`);
+  const res = await fetch(apiUrl(`${pathRacks}/${encodeURIComponent(id)}`));
   return handleJson(res);
 }
 
@@ -53,7 +56,7 @@ export async function createRack(
   attribution: RackSaveAttribution,
 ): Promise<RackConfiguration> {
   const normalized = normalizeConfigDevices(body as RackConfiguration);
-  const res = await fetch(BASE, {
+  const res = await fetch(apiUrl(pathRacks), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -70,7 +73,7 @@ export async function saveRack(
   attribution: RackSaveAttribution,
 ): Promise<RackConfiguration> {
   const normalized = normalizeConfigDevices(config);
-  const res = await fetch(`${BASE}/${encodeURIComponent(config.id)}`, {
+  const res = await fetch(apiUrl(`${pathRacks}/${encodeURIComponent(config.id)}`), {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -78,6 +81,7 @@ export async function saveRack(
       totalHeight: normalized.totalHeight,
       inchesPerRU: normalized.inchesPerRU,
       rackWidthInches: normalized.rackWidthInches,
+      rackDepthInches: normalized.rackDepthInches,
       slackAllowance: normalized.slackAllowance,
       devices: normalized.devices,
       connections: normalized.connections,

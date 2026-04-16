@@ -18,6 +18,14 @@ import {
   horizontalOffsetInchesFromDropX,
   normalizeDeviceHorizontalFields,
 } from '../utils/rackDevicePlacement';
+import type { BuildManualConnectionVisualRoute } from '../utils/rackConnectionHelpers';
+
+export type RackPortMismatchPayload = {
+  from: RackDevice;
+  to: RackDevice;
+  extraSlackInches: number;
+  buildVisualRoute: BuildManualConnectionVisualRoute;
+};
 
 const STANDALONE_UNIT_PX = 40;
 const MIN_UNIT_PX = 3;
@@ -37,14 +45,14 @@ interface RackVisualizerProps {
   inchesPerRU?: number;
   /** Front-panel width in inches (default 19). */
   rackWidthInches?: number;
-  /** Set on the rack frame (bordered area) for JPG export / screenshots. */
+  /** Set on the rack frame (bordered area) for PNG export (transparent outside content). */
   rackCaptureRef?: Ref<HTMLDivElement | null>;
   /** Rack fills parent card: width and per-U height come from layout (ResizeObserver). */
   fillParent?: boolean;
   connections?: RackConnection[];
   slackAllowanceFeet?: number;
   onAddConnection?: (c: RackConnection) => void;
-  onPortMismatch?: (p: { from: RackDevice; to: RackDevice; extraSlackInches: number }) => void;
+  onPortMismatch?: (p: RackPortMismatchPayload) => void;
   onRemoveConnection?: (connectionId: string) => void;
 }
 
@@ -60,9 +68,9 @@ function RackUnit({
   return (
     <div
       style={{ height: `${unitHeightPx}px` }}
-      className="relative flex min-h-0 items-center border-b border-gray-300 bg-gradient-to-r from-gray-100 to-gray-50 px-1 sm:px-2"
+      className="relative flex min-h-0 items-center border-b border-slate-600/40 bg-gradient-to-r from-slate-700/75 via-slate-700/55 to-slate-600/50 px-1 sm:px-2"
     >
-      <span className="text-[10px] font-mono text-gray-400 sm:text-xs">{totalHeight - position}U</span>
+      <span className="text-[10px] font-mono text-slate-400 sm:text-xs">{totalHeight - position}U</span>
     </div>
   );
 }
@@ -116,12 +124,12 @@ function DraggableDevice({
       ref={drag}
       data-rack-device-id={device.id}
       style={{ height: `${heightPx}px`, left: `${leftPct}%`, width: `${widthPct}%` }}
-      className={`pointer-events-auto absolute z-[6] cursor-grab rounded border-2 bg-white pl-3 shadow-md transition-all active:cursor-grabbing group ${
-        isDragging ? 'border-blue-400 opacity-50' : 'border-gray-400 hover:border-blue-500'
+      className={`pointer-events-auto absolute z-[6] cursor-grab rounded border-2 border-slate-500/80 bg-slate-500/85 pl-3 shadow-md shadow-black/25 backdrop-blur-[2px] transition-all active:cursor-grabbing group ${
+        isDragging ? 'border-sky-400 opacity-50' : 'hover:border-sky-500/70'
       }`}
     >
       <div className="flex h-full min-w-0 items-center gap-1 px-1 py-1 sm:gap-2 sm:px-2 sm:py-2">
-        <GripVertical className="size-4 shrink-0 text-gray-400 sm:size-5" aria-hidden />
+        <GripVertical className="size-4 shrink-0 text-slate-300 sm:size-5" aria-hidden />
         <div className="flex shrink-0 flex-col gap-0.5 sm:flex-row sm:gap-0.5">
           <button
             type="button"
@@ -130,7 +138,7 @@ function DraggableDevice({
               e.stopPropagation();
               onEdit(device);
             }}
-            className="rounded p-0.5 text-blue-600 opacity-0 hover:bg-blue-50 group-hover:opacity-100 sm:p-1"
+            className="rounded p-0.5 text-sky-300 opacity-0 hover:bg-slate-600/80 group-hover:opacity-100 sm:p-1"
             title="Edit device"
           >
             <Edit className="size-3.5 sm:size-4" />
@@ -142,17 +150,17 @@ function DraggableDevice({
               e.stopPropagation();
               onRemove(device.id);
             }}
-            className="rounded p-0.5 text-red-600 opacity-0 hover:bg-red-50 group-hover:opacity-100 sm:p-1"
+            className="rounded p-0.5 text-red-300 opacity-0 hover:bg-slate-600/80 group-hover:opacity-100 sm:p-1"
             title="Remove device"
           >
             <Trash2 className="size-3.5 sm:size-4" />
           </button>
         </div>
         <div className="min-w-0 flex-1 pr-2">
-          <div className="truncate text-xs font-medium text-gray-900 sm:text-sm">
+          <div className="truncate text-xs font-medium text-slate-50 sm:text-sm">
             {getDeviceDisplayName(device)}
           </div>
-          <div className="truncate text-[10px] text-gray-500 sm:text-xs">
+          <div className="truncate text-[10px] text-slate-300 sm:text-xs">
             {device.heightInU}U • {getDeviceWidthInches(placed)}&quot; • {device.category}
           </div>
         </div>
@@ -178,7 +186,7 @@ interface DroppableRackProps {
   slackAllowanceFeet?: number;
   rackWidthInches: number;
   onAddConnection?: (c: RackConnection) => void;
-  onPortMismatch?: (p: { from: RackDevice; to: RackDevice; extraSlackInches: number }) => void;
+  onPortMismatch?: (p: RackPortMismatchPayload) => void;
   onRemoveConnection?: (connectionId: string) => void;
 }
 
@@ -255,7 +263,7 @@ function DroppableRack({
     <div
       ref={setDropAndCaptureRef}
       id={rackContainerId}
-      className={`relative max-w-full rounded-lg border-4 border-gray-800 bg-white shadow-xl ${
+      className={`relative max-w-full overflow-hidden rounded-lg border-2 border-slate-500/50 bg-transparent shadow-[0_4px_24px_rgba(0,0,0,0.25)] ${
         stretchWidth ? 'w-full min-w-0' : ''
       }`}
       style={
@@ -433,13 +441,13 @@ function FillParentRack(
 
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col gap-3">
-      <p className="shrink-0 text-center text-sm text-gray-600">
+      <p className="shrink-0 text-center text-sm text-slate-400">
         Drag from the list onto the rack. Drop left/right to set horizontal offset. On the same rack U, the{' '}
-        <strong>sum of device widths</strong> cannot exceed the rack width ({rackWidthInches}&quot;); use the pencil on
-        a device to
-        set width and offset. Drop on the unassigned list to return a device to the pool.
+        <strong className="text-slate-300">sum of device widths</strong> cannot exceed the rack width ({rackWidthInches}
+        &quot;); use the pencil on a device to set width and offset. Drop on the unassigned list to return a device to
+        the pool.
       </p>
-      <p className="shrink-0 text-center text-xs text-gray-500">
+      <p className="shrink-0 text-center text-xs text-slate-500">
         Total Height: {totalHeight}U ({(totalHeight * inchesPerRU).toFixed(1)}&quot; /{' '}
         {(totalHeight * inchesPerRU * 2.54).toFixed(1)} cm) · Width: {rackWidthInches}&quot; (
         {(rackWidthInches * 2.54).toFixed(1)} cm)

@@ -36,8 +36,11 @@ export const rackDeviceSchema = z
     category: z.string(),
     heightInU: z.number().int().positive(),
     rackPosition: z.number().int().min(0).optional(),
-    physicalHeightInches: z.number().optional(),
-    deviceWidthInches: z.number().positive().max(120).optional(),
+    physicalHeightInches: z.number().min(0).optional(),
+    deviceWidthInches: z.number().min(0).max(120).optional(),
+    deviceDepthInches: z.number().min(0).max(120).optional(),
+    sheetPower: z.string().max(2000).optional(),
+    deviceNotes: z.string().max(8000).optional(),
     horizontalOffsetInches: z.number().min(0).max(120).optional(),
     ports: z.array(portSchema),
   })
@@ -62,12 +65,15 @@ const attributionSchema = z.object({
   savedByNameRaw: z.string().optional().nullable(),
 });
 
+const rackDepthInchesSchema = z.number().positive().max(120);
+
 /** Body for POST /api/racks (no rack id yet). */
 export const createRackBodySchema = z.object({
   name: z.string().min(1),
-  totalHeight: z.number().int().positive(),
+  totalHeight: z.number().int().positive().max(60),
   inchesPerRU: inchesPerRUSchema.optional().default(1.75),
   rackWidthInches: z.number().positive().max(120).optional().default(19),
+  rackDepthInches: rackDepthInchesSchema.optional().default(32),
   slackAllowance: z.number(),
   devices: z.array(rackDeviceSchema),
   connections: z.array(rackConnectionSchema),
@@ -77,9 +83,10 @@ export const createRackBodySchema = z.object({
 /** Body for PUT /api/racks/:id */
 export const updateRackBodySchema = z.object({
   name: z.string().min(1),
-  totalHeight: z.number().int().positive(),
+  totalHeight: z.number().int().positive().max(60),
   inchesPerRU: inchesPerRUSchema.optional().default(1.75),
   rackWidthInches: z.number().positive().max(120).optional().default(19),
+  rackDepthInches: rackDepthInchesSchema.optional().default(32),
   slackAllowance: z.number(),
   devices: z.array(rackDeviceSchema),
   connections: z.array(rackConnectionSchema),

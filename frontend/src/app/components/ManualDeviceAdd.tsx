@@ -10,24 +10,38 @@ import {
   mergeBuiltInAndCustomDevices,
   searchDevicesByName,
 } from '../utils/deviceCatalogSearch';
+import { prefetchServerCatalogDevices } from '../utils/serverCatalogCache';
+import { prefetchDeviceCategories } from '../utils/deviceCategoryCache';
 import { clampDeviceWidthToRack } from '../utils/rackDevicePlacement';
+import { RackCategoryField } from './RackCategoryField';
 
 /** Local name for the saved custom device list (browser storage). */
 const FOX_EQUIPMENT_DATABASE_LABEL = 'Fox equipment database';
 
+export type ManualAddDevicePayload = {
+  manufacturer: string;
+  model: string;
+  name: string;
+  category: string;
+  heightInU: number;
+  heightInches?: number;
+  deviceWidthInches?: number;
+  deviceDepthInches?: number;
+  sheetPower?: string;
+  deviceNotes?: string;
+  ports?: Port[];
+  /** When set (built-in or server CSV catalog), rack row id matches catalog for save linkage. */
+  preferredDeviceId?: string;
+};
+
 interface ManualDeviceAddProps {
-  onAddDevice: (device: {
-    manufacturer: string;
-    model: string;
-    name: string;
-    category: string;
-    heightInU: number;
-    heightInches?: number;
-    deviceWidthInches?: number;
-    ports?: Port[];
-  }) => void;
+  onAddDevice: (device: ManualAddDevicePayload) => void;
   /** Matches Cable Identification System palette when set to cable. */
   uiVariant?: 'default' | 'cable';
+  /** When uiVariant=cable: dark rack sidebar panel vs light card. */
+  workSurface?: 'default' | 'rackDark';
+  /** Closed-state primary button matches CSV “Choose file” sizing (build rack two-column layout). */
+  landingPrimaryStyle?: boolean;
 }
 
 function deviceIdentityLabel(d: Device): string {
@@ -38,12 +52,18 @@ function deviceIdentityLabel(d: Device): string {
   });
 }
 
-export function ManualDeviceAdd({ onAddDevice, uiVariant = 'default' }: ManualDeviceAddProps) {
+export function ManualDeviceAdd({
+  onAddDevice,
+  uiVariant = 'default',
+  workSurface = 'default',
+  landingPrimaryStyle = false,
+}: ManualDeviceAddProps) {
   const cable = uiVariant === 'cable';
+  const rackDark = cable && workSurface === 'rackDark';
   const [isOpen, setIsOpen] = useState(false);
   const [manufacturer, setManufacturer] = useState('');
   const [model, setModel] = useState('');
-  const [category, setCategory] = useState('Interface');
+  const [category, setCategory] = useState('Other');
   const [heightValue, setHeightValue] = useState('1');
   const [heightUnit, setHeightUnit] = useState<'U' | 'inches'>('U');
   const [rackWidthInches, setRackWidthInches] = useState('19');
@@ -56,11 +76,16 @@ export function ManualDeviceAdd({ onAddDevice, uiVariant = 'default' }: ManualDe
   const manufacturerRef = useRef<HTMLInputElement>(null);
 
   const refreshPool = useCallback(() => {
-    setDevicePool(mergeBuiltInAndCustomDevices());
+    void prefetchServerCatalogDevices().finally(() => {
+      setDevicePool(mergeBuiltInAndCustomDevices());
+    });
   }, []);
 
   useEffect(() => {
-    if (isOpen) refreshPool();
+    if (isOpen) {
+      refreshPool();
+      void prefetchDeviceCategories();
+    }
   }, [isOpen, refreshPool]);
 
   useEffect(() => {
@@ -100,18 +125,6 @@ export function ManualDeviceAdd({ onAddDevice, uiVariant = 'default' }: ManualDe
     document.addEventListener('mousedown', onDoc);
     return () => document.removeEventListener('mousedown', onDoc);
   }, []);
-
-  const categories = [
-    'Camera',
-    'Interface',
-    'Monitor',
-    'Audio',
-    'Laptop',
-    'Recording',
-    'Network',
-    'Power',
-    'Other',
-  ];
 
   const computeHeights = () => {
     const numericHeight = parseFloat(heightValue) || 1;
@@ -158,15 +171,27 @@ export function ManualDeviceAdd({ onAddDevice, uiVariant = 'default' }: ManualDe
         refreshPool();
       }
 
+      const preferredDeviceId =
+        match && !match.id.startsWith('custom-') && !match.id.startsWith('manual-') ? match.id : undefined;
+
       onAddDevice({
         manufacturer: mfr,
         model: mdl,
         name: displayName,
         category: match ? deviceCategoryToManualLabel(match.category) : category,
         heightInU,
-        heightInches: match?.heightInU != null ? undefined : heightInches,
+        heightInches:
+          match?.physicalHeightInches != null
+            ? match.physicalHeightInches
+            : !match
+              ? heightInches
+              : undefined,
         deviceWidthInches: widthIn,
+        deviceDepthInches: match?.deviceDepthInches,
+        sheetPower: match?.sheetPower,
+        deviceNotes: match?.notes,
         ports: match && match.ports.length > 0 ? match.ports : undefined,
+        preferredDeviceId,
       });
 
       setManufacturer('');
@@ -270,44 +295,55 @@ export function ManualDeviceAdd({ onAddDevice, uiVariant = 'default' }: ManualDe
   };
 
   if (!isOpen) {
+    const landingBtn =
+      cable && landingPrimaryStyle
+        ? 'flex items-center gap-2 rounded-lg border-2 border-[#CC0000] bg-[#CC0000] px-6 py-2 font-semibold text-white shadow-md transition-colors hover:border-[#990000] hover:bg-[#990000]'
+        : cable
+          ? 'flex items-center gap-2 rounded-lg bg-[#003366] px-6 py-3 text-base font-semibold text-white shadow-md transition-colors hover:bg-[#004080] sm:text-lg'
+          : 'flex items-center gap-2 rounded-lg bg-[#003366] px-4 py-2 text-base font-semibold text-white hover:bg-blue-700';
     return (
-      <button
-        type="button"
-        onClick={() => setIsOpen(true)}
-        className={`flex items-center gap-2 rounded-lg bg-[#003366] font-semibold text-white shadow-md transition-colors ${
-          cable
-            ? 'px-6 py-3 text-base hover:bg-[#004080] sm:text-lg'
-            : 'px-4 py-2 text-base hover:bg-blue-700'
-        }`}
-      >
+      <button type="button" onClick={() => setIsOpen(true)} className={landingBtn}>
         <Plus className="size-5" />
-        Add Device Manually
+        Add device manually
       </button>
     );
   }
 
   return (
     <div
-      className={`rounded-xl border bg-white p-4 shadow-md ${
-        cable ? 'border-2 border-slate-200' : 'border border-gray-300'
+      className={`rounded-xl border p-4 shadow-md ${
+        rackDark
+          ? 'border-2 border-slate-600 bg-slate-800/95 text-slate-200'
+          : cable
+            ? 'border-2 border-slate-200 bg-white'
+            : 'border border-gray-300 bg-white'
       }`}
     >
       <div className="mb-4 flex items-center justify-between">
-        <h3 className={`font-semibold ${cable ? 'text-[#003366]' : 'text-gray-900'}`}>Add device manually</h3>
-        <button type="button" onClick={handleClosePanel} className="text-gray-400 hover:text-gray-600">
+        <h3 className={`font-semibold ${rackDark ? 'text-sky-200' : cable ? 'text-[#003366]' : 'text-gray-900'}`}>
+          Add device manually
+        </h3>
+        <button
+          type="button"
+          onClick={handleClosePanel}
+          className={rackDark ? 'text-slate-500 hover:text-slate-200' : 'text-gray-400 hover:text-gray-600'}
+        >
           <X className="size-5" />
         </button>
       </div>
 
       <form onSubmit={trySubmit} className="space-y-4">
         <div ref={wrapRef} className="relative space-y-3">
-          <p className="text-xs text-gray-500">
+          <p className={rackDark ? 'text-xs text-slate-400' : 'text-xs text-gray-500'}>
             Type a manufacturer (e.g. <span className="font-medium">Yamaha</span>) to see all matching catalog gear,
             then pick or enter the model.
           </p>
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
-              <label htmlFor="manual-device-mfr" className="mb-1 block text-sm font-medium text-gray-700">
+              <label
+                htmlFor="manual-device-mfr"
+                className={`mb-1 block text-sm font-medium ${rackDark ? 'text-slate-300' : 'text-gray-700'}`}
+              >
                 Device manufacturer *
               </label>
               <input
@@ -324,13 +360,18 @@ export function ManualDeviceAdd({ onAddDevice, uiVariant = 'default' }: ManualDe
                 autoComplete="organization"
                 placeholder="e.g. Yamaha, Sony"
                 required
-                className={`w-full rounded-lg border border-gray-300 px-3 py-2 focus:border-transparent focus:outline-none focus:ring-2 ${
-                  cable ? 'focus:ring-[#003366]' : 'focus:ring-blue-500'
+                className={`w-full rounded-lg border px-3 py-2 focus:border-transparent focus:outline-none focus:ring-2 ${
+                  rackDark
+                    ? 'border-slate-600 bg-slate-900/90 text-slate-100 placeholder:text-slate-500 focus:ring-sky-500/40'
+                    : `border-gray-300 ${cable ? 'focus:ring-[#003366]' : 'focus:ring-blue-500'}`
                 }`}
               />
             </div>
             <div>
-              <label htmlFor="manual-device-model" className="mb-1 block text-sm font-medium text-gray-700">
+              <label
+                htmlFor="manual-device-model"
+                className={`mb-1 block text-sm font-medium ${rackDark ? 'text-slate-300' : 'text-gray-700'}`}
+              >
                 Model / model number *
               </label>
               <input
@@ -346,19 +387,22 @@ export function ManualDeviceAdd({ onAddDevice, uiVariant = 'default' }: ManualDe
                 autoComplete="off"
                 placeholder="e.g. MG10XU, FX6"
                 required
-                className={`w-full rounded-lg border border-gray-300 px-3 py-2 focus:border-transparent focus:outline-none focus:ring-2 ${
-                  cable ? 'focus:ring-[#003366]' : 'focus:ring-blue-500'
+                className={`w-full rounded-lg border px-3 py-2 focus:border-transparent focus:outline-none focus:ring-2 ${
+                  rackDark
+                    ? 'border-slate-600 bg-slate-900/90 text-slate-100 placeholder:text-slate-500 focus:ring-sky-500/40'
+                    : `border-gray-300 ${cable ? 'focus:ring-[#003366]' : 'focus:ring-blue-500'}`
                 }`}
               />
             </div>
           </div>
           {typedLabel && (
-            <p className="text-xs text-gray-600">
-              On rack: <span className="font-medium text-gray-900">{typedLabel}</span>
+            <p className={rackDark ? 'text-xs text-slate-400' : 'text-xs text-gray-600'}>
+              On rack:{' '}
+              <span className={`font-medium ${rackDark ? 'text-slate-100' : 'text-gray-900'}`}>{typedLabel}</span>
             </p>
           )}
           {chosenCatalogDevice && (
-            <p className="text-xs text-green-700">
+            <p className={rackDark ? 'text-xs text-emerald-400' : 'text-xs text-green-700'}>
               Using catalog entry: ports and category from “{deviceIdentityLabel(chosenCatalogDevice)}”.
             </p>
           )}
@@ -366,26 +410,36 @@ export function ManualDeviceAdd({ onAddDevice, uiVariant = 'default' }: ManualDe
             <ul
               id="manual-device-suggestions"
               role="listbox"
-              className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-lg border border-gray-200 bg-white py-1 shadow-lg sm:max-w-xl"
+              className={`absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-lg border py-1 shadow-lg sm:max-w-xl ${
+                rackDark ? 'border-slate-600 bg-slate-900' : 'border-gray-200 bg-white'
+              }`}
             >
               {suggestions.map((d, idx) => (
                 <li key={d.id} role="option" aria-selected={idx === highlightedIndex}>
                   <button
                     type="button"
                     className={`w-full px-3 py-2 text-left text-sm ${
-                      cable
+                      rackDark
                         ? idx === highlightedIndex
-                          ? 'bg-red-50'
-                          : 'hover:bg-slate-50'
-                        : idx === highlightedIndex
-                          ? 'bg-blue-50'
-                          : 'hover:bg-blue-50'
+                          ? 'bg-slate-700'
+                          : 'hover:bg-slate-800'
+                        : cable
+                          ? idx === highlightedIndex
+                            ? 'bg-red-50'
+                            : 'hover:bg-slate-50'
+                          : idx === highlightedIndex
+                            ? 'bg-blue-50'
+                            : 'hover:bg-blue-50'
                     }`}
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={() => applySuggestion(d)}
                   >
-                    <span className="font-medium text-gray-900">{deviceIdentityLabel(d)}</span>
-                    <span className="ml-2 text-xs text-gray-500">{deviceCategoryToManualLabel(d.category)}</span>
+                    <span className={`font-medium ${rackDark ? 'text-slate-100' : 'text-gray-900'}`}>
+                      {deviceIdentityLabel(d)}
+                    </span>
+                    <span className={`ml-2 text-xs ${rackDark ? 'text-slate-400' : 'text-gray-500'}`}>
+                      {deviceCategoryToManualLabel(d.category)}
+                    </span>
                   </button>
                 </li>
               ))}
@@ -394,24 +448,26 @@ export function ManualDeviceAdd({ onAddDevice, uiVariant = 'default' }: ManualDe
         </div>
 
         <div>
-          <label className="mb-1 block text-sm font-medium text-gray-700">Category</label>
-          <select
+          <label className={`mb-1 block text-sm font-medium ${rackDark ? 'text-slate-300' : 'text-gray-700'}`}>
+            Category
+          </label>
+          <RackCategoryField
+            label=""
+            showHint={false}
             value={category}
-            onChange={(e) => setCategory(e.target.value)}
-            className={`w-full rounded-lg border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 ${
-              cable ? 'focus:ring-[#003366]' : 'focus:ring-blue-500'
+            onChange={setCategory}
+            inputClassName={`w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 ${
+              rackDark
+                ? 'border-slate-600 bg-slate-900/90 text-slate-100 focus:ring-sky-500/40'
+                : `border-gray-300 ${cable ? 'focus:ring-[#003366]' : 'focus:ring-blue-500'}`
             }`}
-          >
-            {categories.map((cat) => (
-              <option key={cat} value={cat}>
-                {cat}
-              </option>
-            ))}
-          </select>
+          />
         </div>
 
         <div>
-          <label className="mb-1 block text-sm font-medium text-gray-700">Height</label>
+          <label className={`mb-1 block text-sm font-medium ${rackDark ? 'text-slate-300' : 'text-gray-700'}`}>
+            Height
+          </label>
           <div className="grid grid-cols-2 gap-2">
             <input
               type="number"
@@ -420,15 +476,19 @@ export function ManualDeviceAdd({ onAddDevice, uiVariant = 'default' }: ManualDe
               min={heightUnit === 'U' ? '1' : '0.1'}
               step={heightUnit === 'U' ? '1' : '0.25'}
               required
-              className={`w-full rounded-lg border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 ${
-                cable ? 'focus:ring-[#003366]' : 'focus:ring-blue-500'
+              className={`w-full rounded-lg border px-3 py-2 focus:outline-none focus:ring-2 ${
+                rackDark
+                  ? 'border-slate-600 bg-slate-900/90 text-slate-100 focus:ring-sky-500/40'
+                  : `border-gray-300 ${cable ? 'focus:ring-[#003366]' : 'focus:ring-blue-500'}`
               }`}
             />
             <select
               value={heightUnit}
               onChange={(e) => setHeightUnit(e.target.value as 'U' | 'inches')}
-              className={`w-full rounded-lg border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 ${
-                cable ? 'focus:ring-[#003366]' : 'focus:ring-blue-500'
+              className={`w-full rounded-lg border px-3 py-2 focus:outline-none focus:ring-2 ${
+                rackDark
+                  ? 'border-slate-600 bg-slate-900/90 text-slate-100 focus:ring-sky-500/40'
+                  : `border-gray-300 ${cable ? 'focus:ring-[#003366]' : 'focus:ring-blue-500'}`
               }`}
             >
               <option value="U">Rack units (U)</option>
@@ -436,12 +496,17 @@ export function ManualDeviceAdd({ onAddDevice, uiVariant = 'default' }: ManualDe
             </select>
           </div>
           {heightUnit === 'inches' && (
-            <p className="mt-1 text-xs text-gray-500">≈ {Math.ceil(parseFloat(heightValue || '0') / 1.75)}U</p>
+            <p className={`mt-1 text-xs ${rackDark ? 'text-slate-500' : 'text-gray-500'}`}>
+              ≈ {Math.ceil(parseFloat(heightValue || '0') / 1.75)}U
+            </p>
           )}
         </div>
 
         <div>
-          <label htmlFor="manual-rack-width" className="mb-1 block text-sm font-medium text-gray-700">
+          <label
+            htmlFor="manual-rack-width"
+            className={`mb-1 block text-sm font-medium ${rackDark ? 'text-slate-300' : 'text-gray-700'}`}
+          >
             Rack width (inches)
           </label>
           <input
@@ -452,19 +517,29 @@ export function ManualDeviceAdd({ onAddDevice, uiVariant = 'default' }: ManualDe
             step={0.25}
             value={rackWidthInches}
             onChange={(e) => setRackWidthInches(e.target.value)}
-            className={`w-full rounded-lg border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 ${
-              cable ? 'focus:ring-[#003366]' : 'focus:ring-blue-500'
+            className={`w-full rounded-lg border px-3 py-2 focus:outline-none focus:ring-2 ${
+              rackDark
+                ? 'border-slate-600 bg-slate-900/90 text-slate-100 focus:ring-sky-500/40'
+                : `border-gray-300 ${cable ? 'focus:ring-[#003366]' : 'focus:ring-blue-500'}`
             }`}
           />
-          <p className="mt-1 text-xs text-gray-500">
+          <p className={`mt-1 text-xs ${rackDark ? 'text-slate-500' : 'text-gray-500'}`}>
             Saved with the device when you add to {FOX_EQUIPMENT_DATABASE_LABEL}; used when placing on the rack.
           </p>
         </div>
 
         {showFoxPrompt && (
-          <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
-            <p className="font-medium text-amber-900">No exact match in the device list</p>
-            <p className="mt-2 text-amber-900/90">
+          <div
+            className={`rounded-lg border p-4 text-sm ${
+              rackDark
+                ? 'border-amber-700/50 bg-amber-950/40 text-amber-100'
+                : 'border-amber-200 bg-amber-50 text-amber-950'
+            }`}
+          >
+            <p className={`font-medium ${rackDark ? 'text-amber-200' : 'text-amber-900'}`}>
+              No exact match in the device list
+            </p>
+            <p className={`mt-2 ${rackDark ? 'text-amber-100/90' : 'text-amber-900/90'}`}>
               “{typedLabel}” is not identical to any built-in or saved model. Add it to the{' '}
               <span className="font-medium">{FOX_EQUIPMENT_DATABASE_LABEL}</span> (this browser) so it appears in future
               autocomplete?
@@ -502,9 +577,11 @@ export function ManualDeviceAdd({ onAddDevice, uiVariant = 'default' }: ManualDe
               type="button"
               onClick={handleClosePanel}
               className={`rounded-lg px-4 py-2 ${
-                cable
-                  ? 'border border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
-                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                rackDark
+                  ? 'border border-slate-500 bg-slate-800 text-slate-200 hover:bg-slate-700'
+                  : cable
+                    ? 'border border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
+                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
               }`}
             >
               Cancel

@@ -15,6 +15,8 @@ interface QuickPresetsProps {
   requiredDeviceIds?: Set<string>;
   /** `embedded` = compact block for rack sidebar; default = full standalone card. */
   variant?: 'default' | 'embedded';
+  /** When variant=embedded: match dark rack sidebar (`dark`) vs light cable finder page (`default`). */
+  embeddedSurface?: 'default' | 'dark';
 }
 
 export const quickConnectionPresets: Preset[] = [
@@ -55,6 +57,7 @@ export function QuickPresets({
   onSelectPreset,
   requiredDeviceIds,
   variant = 'default',
+  embeddedSurface = 'default',
 }: QuickPresetsProps) {
   const presets = requiredDeviceIds
     ? quickConnectionPresets.filter(
@@ -76,21 +79,30 @@ export function QuickPresets({
   }
 
   const isEmbedded = variant === 'embedded';
+  const embeddedDark = isEmbedded && embeddedSurface === 'dark';
 
   return (
     <div
       className={
         isEmbedded
-          ? 'mb-4 rounded-lg border border-purple-100 bg-purple-50/40 p-3'
+          ? embeddedDark
+            ? 'mb-4 rounded-lg border border-violet-900/50 bg-violet-950/30 p-3'
+            : 'mb-4 rounded-lg border border-purple-100 bg-purple-50/40 p-3'
           : 'mb-6 rounded-xl bg-white p-6 shadow-lg'
       }
     >
       <div className={`flex flex-wrap items-center gap-2 ${isEmbedded ? 'mb-3' : 'mb-4'}`}>
-        <Sparkles className={`shrink-0 text-purple-600 ${isEmbedded ? 'size-4' : 'size-5'}`} />
-        <h2 className={`font-semibold text-gray-900 ${isEmbedded ? 'text-sm' : 'text-lg'}`}>
+        <Sparkles
+          className={`shrink-0 ${isEmbedded ? 'size-4' : 'size-5'} ${embeddedDark ? 'text-violet-300' : 'text-purple-600'}`}
+        />
+        <h2
+          className={`font-semibold ${isEmbedded ? 'text-sm' : 'text-lg'} ${embeddedDark ? 'text-violet-100' : 'text-gray-900'}`}
+        >
           Quick presets
         </h2>
-        <span className="text-xs text-gray-500">when both devices are on this rack</span>
+        <span className={`text-xs ${embeddedDark ? 'text-violet-300/80' : 'text-gray-500'}`}>
+          when both devices are on this rack
+        </span>
       </div>
 
       <div className={`grid grid-cols-1 gap-2 ${isEmbedded ? 'sm:grid-cols-2' : 'gap-3 sm:grid-cols-2 lg:grid-cols-3'}`}>
@@ -99,12 +111,22 @@ export function QuickPresets({
             key={idx}
             type="button"
             onClick={() => handlePresetClick(preset)}
-            className="group rounded-lg border-2 border-gray-200 bg-white p-2.5 text-left transition-all hover:border-purple-400 hover:bg-purple-50 sm:p-3"
+            className={
+              embeddedDark
+                ? 'group rounded-lg border border-slate-600 bg-slate-800/90 p-2.5 text-left transition-all hover:border-violet-500 hover:bg-slate-700 sm:p-3'
+                : 'group rounded-lg border-2 border-gray-200 bg-white p-2.5 text-left transition-all hover:border-purple-400 hover:bg-purple-50 sm:p-3'
+            }
           >
-            <div className="mb-0.5 font-medium text-gray-900 group-hover:text-purple-900 text-sm">
+            <div
+              className={`mb-0.5 text-sm font-medium ${embeddedDark ? 'text-slate-100 group-hover:text-violet-200' : 'text-gray-900 group-hover:text-purple-900'}`}
+            >
               {preset.name}
             </div>
-            <div className="text-xs text-gray-500 group-hover:text-purple-700">{preset.description}</div>
+            <div
+              className={`text-xs ${embeddedDark ? 'text-slate-400 group-hover:text-violet-200/90' : 'text-gray-500 group-hover:text-purple-700'}`}
+            >
+              {preset.description}
+            </div>
           </button>
         ))}
       </div>

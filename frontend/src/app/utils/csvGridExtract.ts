@@ -1,20 +1,39 @@
+import type { Device } from '../data/equipment';
+import { buildDeviceExactLookup, resolvePartsNameToCatalogDevice } from './deviceCatalogSearch';
+import { getDeviceDisplayName, inferManufacturerModelFromLegacyName } from './deviceDisplay';
+import { DEFAULT_INCHES_PER_RU, ruFromInches } from './rackUnits';
+
 /**
- * Collect human-readable text from every cell in a CSV so imports are not limited to the first column.
+ * CSV row → one rack import candidate. Identity from:
+ * `manufacturer` + `model`, or `name`, or (when those are missing) other cells matched to the catalog
+ * or parsed as manufacturer-style text. Row settings: category, power, width, height, depth;
+ * numbers next to `RU` in any cell set rack height (U) when no explicit U column.
  */
 
 export type CsvCellCandidate = {
-  /** Display string from the sheet */
+  /** Single display / match string (manufacturer + model, or name column). */
   text: string;
   heightInU: number;
   category: string;
-  physicalHeightInches?: number;
-  /** True when this value came from the primary "name" column for that row */
+  /** Face height in inches from the sheet (0 if missing / non-numeric). */
+  physicalHeightInches: number;
   fromNameColumn: boolean;
+  manufacturer?: string;
+  model?: string;
+  /** Front width in inches (0 if missing). Placement still uses default width when 0. */
+  deviceWidthInches: number;
+  /** Depth in inches (0 if missing). */
+  deviceDepthInches: number;
+  sheetPower: string;
+  /** True when this row's object keys include a header whose name contains "height" (case-insensitive). */
+  sheetHadHeightColumn: boolean;
+  sheetHadDepthColumn: boolean;
+  sheetHadWidthColumn: boolean;
 };
 
 const PURE_NUMBER = /^\d+(\.\d+)?$/;
 
-/** Skip cells that are obviously not equipment names */
+/** Skip cells that are obviously not equipment names (legacy matrix mode). */
 export function shouldSkipCellValue(raw: string): boolean {
   const t = raw.trim();
   if (t.length < 2) return true;
@@ -22,104 +41,348 @@ export function shouldSkipCellValue(raw: string): boolean {
   return false;
 }
 
-function parseHeightFromRow(row: Record<string, unknown>): {
-  heightInU: number;
-  category: string;
-  physicalHeightInches?: number;
-} {
-  let category = 'Interface';
-  let heightInU = 1;
-  let physicalHeightInches: number | undefined;
-
-  const catVal = row.category ?? row.Category;
-  if (typeof catVal === 'string' && catVal.trim()) {
-    category = catVal.trim();
+function pickValue(row: Record<string, unknown>, keys: string[]): unknown {
+  const lower = new Map<string, unknown>();
+  for (const [k, v] of Object.entries(row)) {
+    lower.set(k.toLowerCase(), v);
   }
+  for (const k of keys) {
+    const direct = row[k];
+    if (direct != null && String(direct).trim() !== '') return direct;
+    const lv = lower.get(k.toLowerCase());
+    if (lv != null && String(lv).trim() !== '') return lv;
+  }
+  return undefined;
+}
 
-  const hu = row.heightU ?? row.heightu ?? row.HeightU;
-  if (hu != null && String(hu).trim() !== '') {
-    const n = parseFloat(String(hu));
-    if (!Number.isNaN(n)) heightInU = Math.max(1, Math.round(n));
-  } else {
-    const hi = row.heightInches ?? row.height_inches ?? row.HeightInches;
-    if (hi != null && String(hi).trim() !== '') {
-      physicalHeightInches = parseFloat(String(hi));
-      if (!Number.isNaN(physicalHeightInches)) {
-        heightInU = Math.max(1, Math.ceil(physicalHeightInches / 1.75));
-      }
+function pickString(row: Record<string, unknown>, keys: string[]): string {
+  const raw = pickValue(row, keys);
+  if (raw == null) return '';
+  return String(raw).trim();
+}
+
+/** Non-negative number; missing or invalid → 0. */
+export function pickNonNegativeNumber(row: Record<string, unknown>, keys: string[]): number {
+  const raw = pickValue(row, keys);
+  if (raw == null || raw === '') return 0;
+  const n = parseFloat(String(raw).replace(/,/g, ''));
+  return Number.isFinite(n) && n >= 0 ? n : 0;
+}
+
+/** Match header labels loosely (e.g. "Rack width" vs rackWidth). */
+function pickNonNegativeNumberLoose(row: Record<string, unknown>, headerPatterns: string[]): number {
+  const norm = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').replace(/-/g, ' ');
+  const rowKeys = Object.keys(row);
+  for (const pat of headerPatterns) {
+    const p = norm(pat);
+    for (const k of rowKeys) {
+      if (norm(k) !== p) continue;
+      const raw = row[k];
+      if (raw == null || raw === '') continue;
+      const n = parseFloat(String(raw).replace(/,/g, ''));
+      if (Number.isFinite(n) && n >= 0) return n;
     }
   }
+  return 0;
+}
 
-  return { heightInU, category, physicalHeightInches };
+export type SheetRowSettings = {
+  heightInU: number;
+  category: string;
+  physicalHeightInches: number;
+  deviceWidthInches: number;
+  deviceDepthInches: number;
+  sheetPower: string;
+  sheetHadHeightColumn: boolean;
+  sheetHadDepthColumn: boolean;
+  sheetHadWidthColumn: boolean;
+};
+
+function rowHeaderDimensionHints(row: Record<string, unknown>): {
+  sheetHadHeightColumn: boolean;
+  sheetHadDepthColumn: boolean;
+  sheetHadWidthColumn: boolean;
+} {
+  let sheetHadHeightColumn = false;
+  let sheetHadDepthColumn = false;
+  let sheetHadWidthColumn = false;
+  for (const k of Object.keys(row)) {
+    const lower = k.toLowerCase();
+    if (lower.includes('height')) sheetHadHeightColumn = true;
+    if (lower.includes('depth')) sheetHadDepthColumn = true;
+    if (lower.includes('width')) sheetHadWidthColumn = true;
+  }
+  return { sheetHadHeightColumn, sheetHadDepthColumn, sheetHadWidthColumn };
+}
+
+/** Integers from patterns like `3 RU`, `2RU`, `12 ru` in any cell (1–100). */
+function extractRackUnitsFromRowText(row: Record<string, unknown>): number | null {
+  const re = /(\d+(?:\.\d+)?)\s*RU\b/gi;
+  let best: number | null = null;
+  for (const v of Object.values(row)) {
+    if (v == null) continue;
+    const s = String(v);
+    const matches = s.matchAll(re);
+    for (const m of matches) {
+      const n = parseFloat(m[1] ?? '');
+      if (!Number.isFinite(n) || n <= 0) continue;
+      const rounded = Math.max(1, Math.min(100, Math.round(n)));
+      best = best == null ? rounded : Math.max(best, rounded);
+    }
+  }
+  return best;
+}
+
+/** Category, power, width, height, depth from labeled columns only (defaults: category empty, numbers 0). */
+export function parseSheetRowSettings(row: Record<string, unknown>): SheetRowSettings {
+  const hints = rowHeaderDimensionHints(row);
+  const category = pickString(row, ['category', 'Category']);
+  const sheetPower = pickString(row, ['power', 'Power']);
+  const deviceWidthInches = Math.max(
+    pickNonNegativeNumber(row, [
+      'width',
+      'Width',
+      'rackWidth',
+      'RackWidth',
+      'rack_width',
+      'RackWidthInches',
+      'deviceWidth',
+      'device_width',
+    ]),
+    pickNonNegativeNumberLoose(row, ['rack width', 'rack-width', 'rack width inches']),
+  );
+  const physicalHeightInches = Math.max(
+    pickNonNegativeNumber(row, [
+      'height',
+      'Height',
+      'heightInches',
+      'HeightInches',
+      'height_inches',
+    ]),
+    pickNonNegativeNumberLoose(row, ['rack height', 'face height', 'height inches']),
+  );
+  const deviceDepthInches = Math.max(
+    pickNonNegativeNumber(row, ['depth', 'Depth', 'deviceDepth', 'device_depth']),
+    pickNonNegativeNumberLoose(row, ['rack depth', 'equipment depth']),
+  );
+  const heightU = pickNonNegativeNumber(row, ['heightU', 'heightu', 'HeightU', 'height_u', 'rackHeightU', 'RackHeightU']);
+
+  const ruFromText = extractRackUnitsFromRowText(row);
+
+  let heightInU = 1;
+  if (heightU > 0) {
+    heightInU = Math.max(1, Math.round(heightU));
+  } else if (ruFromText != null && ruFromText > 0) {
+    heightInU = ruFromText;
+  } else if (physicalHeightInches > 0) {
+    heightInU = ruFromInches(physicalHeightInches, DEFAULT_INCHES_PER_RU);
+  }
+
+  return {
+    heightInU,
+    category: category || '',
+    physicalHeightInches,
+    deviceWidthInches,
+    deviceDepthInches,
+    sheetPower,
+    ...hints,
+  };
 }
 
 function getNameFieldKey(fields: string[]): string | undefined {
   return fields.find((f) => f.toLowerCase() === 'name');
 }
 
-/** If the row has separate manufacturer + model columns, return a single label for catalog matching. */
-function readManufacturerModelFromRow(row: Record<string, unknown>): string | null {
+/** Combined manufacturer + model when both present (trimmed). */
+function readManufacturerModelFromRow(row: Record<string, unknown>): { combined: string; mfr: string; mdl: string } | null {
   const mKeys = ['manufacturer', 'Manufacturer', 'deviceManufacturer', 'mfr', 'make', 'Make'];
   const modelKeys = ['model', 'Model', 'modelNumber', 'model_number', 'deviceModel', 'device_model'];
   let manufacturer = '';
   let model = '';
   for (const k of mKeys) {
-    const v = row[k];
-    if (typeof v === 'string' && v.trim()) {
-      manufacturer = v.trim();
+    const v = pickValue(row, [k]);
+    if (v != null && String(v).trim()) {
+      manufacturer = String(v).trim();
       break;
     }
   }
   for (const k of modelKeys) {
-    const v = row[k];
-    if (typeof v === 'string' && v.trim()) {
-      model = v.trim();
+    const v = pickValue(row, [k]);
+    if (v != null && String(v).trim()) {
+      model = String(v).trim();
       break;
     }
   }
   if (!manufacturer || !model) return null;
   const combined = `${manufacturer} ${model}`.trim();
-  return shouldSkipCellValue(combined) ? null : combined;
+  if (shouldSkipCellValue(combined)) return null;
+  return { combined, mfr: manufacturer, mdl: model };
+}
+
+function isLikelyMetadataColumnKey(key: string): boolean {
+  const l = key.trim().toLowerCase().replace(/\s+/g, ' ');
+  if (l === 'name' || l === 'id' || l === 'uuid') return true;
+  const tokens = [
+    'category',
+    'type',
+    'power',
+    'sku',
+    'qty',
+    'quantity',
+    'price',
+    'cost',
+    'notes',
+    'note',
+    'comment',
+    'description',
+    'location',
+    'date',
+    'status',
+    'serial',
+    'part',
+    'line',
+    'item',
+    'row',
+    'column',
+    'total',
+    'sum',
+    'weight',
+    'voltage',
+    'amp',
+    'position',
+    'slot',
+  ];
+  for (const t of tokens) {
+    if (l === t || l.startsWith(`${t} `) || l.endsWith(` ${t}`) || l.includes(` ${t} `)) return true;
+  }
+  if (l.includes('height') || l.includes('depth') || l.includes('width')) return true;
+  return false;
 }
 
 /**
- * Walk every field on every row; each non-skipped string becomes a candidate.
- * Row-level height/category apply to cells in that row (name column preferred for primary label).
+ * When there is no `name` / mfr+model identity, scan other cells: catalog match (exact/fuzzy),
+ * else manufacturer-style parse, else longest text that looks like a label.
+ */
+function inferIdentityFromRow(
+  row: Record<string, unknown>,
+  pool: Device[],
+  exactLookup: Map<string, Device>,
+): { text: string; manufacturer?: string; model?: string } | null {
+  const candidates: string[] = [];
+  const seen = new Set<string>();
+  for (const [k, v] of Object.entries(row)) {
+    if (isLikelyMetadataColumnKey(k)) continue;
+    if (v == null) continue;
+    const raw = String(v).replace(/\r\n/g, '\n').split('\n')[0]!.trim();
+    if (!raw || shouldSkipCellValue(raw)) continue;
+    const lk = raw.toLowerCase();
+    if (seen.has(lk)) continue;
+    seen.add(lk);
+    candidates.push(raw);
+  }
+  if (candidates.length === 0) return null;
+  candidates.sort((a, b) => b.length - a.length);
+
+  for (const t of candidates) {
+    const hit = resolvePartsNameToCatalogDevice(t, pool, exactLookup);
+    if (hit) {
+      const d = hit.device;
+      return {
+        text: getDeviceDisplayName({ name: d.name, manufacturer: d.manufacturer, model: d.model }),
+        manufacturer: d.manufacturer?.trim() || undefined,
+        model: d.model?.trim() || undefined,
+      };
+    }
+  }
+
+  const longest = candidates[0]!;
+  const inf = inferManufacturerModelFromLegacyName(longest);
+  const label = getDeviceDisplayName({ name: '', manufacturer: inf.manufacturer, model: inf.model }).trim();
+  if (label.length >= 3) {
+    return {
+      text: label,
+      manufacturer: inf.manufacturer.trim() || undefined,
+      model: inf.model.trim() || undefined,
+    };
+  }
+  if (longest.length >= 4 && /[a-zA-Z]/.test(longest)) {
+    return { text: longest };
+  }
+  return null;
+}
+
+/**
+ * One candidate per data row: label from manufacturer+model, else `name`, else inferred from other cells.
  */
 export function extractCandidatesFromObjectRows(
   rows: Record<string, unknown>[],
   fields: string[],
+  pool: Device[],
 ): CsvCellCandidate[] {
   const nameKey = getNameFieldKey(fields);
+  const exactLookup = buildDeviceExactLookup(pool);
   const out: CsvCellCandidate[] = [];
 
   for (const row of rows) {
     if (!row || typeof row !== 'object') continue;
-    const meta = parseHeightFromRow(row);
+    const meta = parseSheetRowSettings(row);
 
-    const combinedMfrModel = readManufacturerModelFromRow(row);
-    if (combinedMfrModel) {
+    const mfrModel = readManufacturerModelFromRow(row);
+    if (mfrModel) {
       out.push({
-        text: combinedMfrModel,
+        text: mfrModel.combined,
         heightInU: meta.heightInU,
         category: meta.category,
         physicalHeightInches: meta.physicalHeightInches,
         fromNameColumn: true,
+        manufacturer: mfrModel.mfr,
+        model: mfrModel.mdl,
+        deviceWidthInches: meta.deviceWidthInches,
+        deviceDepthInches: meta.deviceDepthInches,
+        sheetPower: meta.sheetPower,
+        sheetHadHeightColumn: meta.sheetHadHeightColumn,
+        sheetHadDepthColumn: meta.sheetHadDepthColumn,
+        sheetHadWidthColumn: meta.sheetHadWidthColumn,
       });
+      continue;
     }
 
-    for (const field of fields) {
-      const v = row[field];
-      if (v == null) continue;
-      const str = String(v).trim();
-      if (shouldSkipCellValue(str)) continue;
+    if (nameKey) {
+      const nameVal = pickString(row, [nameKey]);
+      if (nameVal && !shouldSkipCellValue(nameVal)) {
+        out.push({
+          text: nameVal,
+          heightInU: meta.heightInU,
+          category: meta.category,
+          physicalHeightInches: meta.physicalHeightInches,
+          fromNameColumn: true,
+          deviceWidthInches: meta.deviceWidthInches,
+          deviceDepthInches: meta.deviceDepthInches,
+          sheetPower: meta.sheetPower,
+          sheetHadHeightColumn: meta.sheetHadHeightColumn,
+          sheetHadDepthColumn: meta.sheetHadDepthColumn,
+          sheetHadWidthColumn: meta.sheetHadWidthColumn,
+        });
+        continue;
+      }
+    }
 
+    const inferred = inferIdentityFromRow(row, pool, exactLookup);
+    if (inferred) {
       out.push({
-        text: str,
+        text: inferred.text,
         heightInU: meta.heightInU,
         category: meta.category,
         physicalHeightInches: meta.physicalHeightInches,
-        fromNameColumn: nameKey !== undefined && field === nameKey,
+        fromNameColumn: true,
+        manufacturer: inferred.manufacturer,
+        model: inferred.model,
+        deviceWidthInches: meta.deviceWidthInches,
+        deviceDepthInches: meta.deviceDepthInches,
+        sheetPower: meta.sheetPower,
+        sheetHadHeightColumn: meta.sheetHadHeightColumn,
+        sheetHadDepthColumn: meta.sheetHadDepthColumn,
+        sheetHadWidthColumn: meta.sheetHadWidthColumn,
       });
     }
   }
@@ -127,32 +390,37 @@ export function extractCandidatesFromObjectRows(
   return out;
 }
 
-/** Every cell in a headerless row array (array-of-arrays). */
+/** Headerless matrix: first column per row is the device label (row 0 = header row skipped in caller). */
 export function extractCandidatesFromMatrix(rows: unknown[][]): CsvCellCandidate[] {
   const out: CsvCellCandidate[] = [];
 
   for (let r = 0; r < rows.length; r++) {
     const row = rows[r];
-    if (!Array.isArray(row)) continue;
-    for (let c = 0; c < row.length; c++) {
-      const v = row[c];
-      if (v == null) continue;
-      const str = String(v).trim();
-      if (r === 0 && str.toLowerCase() === 'name') continue;
-      if (shouldSkipCellValue(str)) continue;
-      out.push({
-        text: str,
-        heightInU: 1,
-        category: 'Interface',
-        fromNameColumn: c === 0,
-      });
-    }
+    if (!Array.isArray(row) || row.length === 0) continue;
+    const v0 = row[0];
+    if (v0 == null) continue;
+    const str = String(v0).trim();
+    if (r === 0 && str.toLowerCase() === 'name') continue;
+    if (shouldSkipCellValue(str)) continue;
+    out.push({
+      text: str,
+      heightInU: 1,
+      category: '',
+      physicalHeightInches: 0,
+      fromNameColumn: true,
+      deviceWidthInches: 0,
+      deviceDepthInches: 0,
+      sheetPower: '',
+      sheetHadHeightColumn: false,
+      sheetHadDepthColumn: false,
+      sheetHadWidthColumn: false,
+    });
   }
 
   return out;
 }
 
-/** Stable order dedupe by lowercase text; merge metadata (prefer name-column + first row height). */
+/** Dedupe by label (case-insensitive); merge numeric settings (max where meaningful). */
 export function dedupeCandidates(candidates: CsvCellCandidate[]): CsvCellCandidate[] {
   const map = new Map<string, CsvCellCandidate>();
 
@@ -165,12 +433,36 @@ export function dedupeCandidates(candidates: CsvCellCandidate[]): CsvCellCandida
     }
     const preferNew =
       (c.fromNameColumn && !prev.fromNameColumn) ||
-      (c.fromNameColumn === prev.fromNameColumn && c.heightInU > 1 && prev.heightInU === 1);
+      (c.fromNameColumn === prev.fromNameColumn && c.heightInU > prev.heightInU);
     if (preferNew) {
       map.set(key, {
         ...c,
         heightInU: Math.max(c.heightInU, prev.heightInU),
-        physicalHeightInches: c.physicalHeightInches ?? prev.physicalHeightInches,
+        physicalHeightInches: Math.max(c.physicalHeightInches, prev.physicalHeightInches),
+        deviceWidthInches: Math.max(c.deviceWidthInches, prev.deviceWidthInches),
+        deviceDepthInches: Math.max(c.deviceDepthInches, prev.deviceDepthInches),
+        sheetPower: c.sheetPower || prev.sheetPower,
+        manufacturer: c.manufacturer ?? prev.manufacturer,
+        model: c.model ?? prev.model,
+        category: (c.category || prev.category || '').trim(),
+        sheetHadHeightColumn: prev.sheetHadHeightColumn || c.sheetHadHeightColumn,
+        sheetHadDepthColumn: prev.sheetHadDepthColumn || c.sheetHadDepthColumn,
+        sheetHadWidthColumn: prev.sheetHadWidthColumn || c.sheetHadWidthColumn,
+      });
+    } else {
+      map.set(key, {
+        ...prev,
+        heightInU: Math.max(c.heightInU, prev.heightInU),
+        physicalHeightInches: Math.max(c.physicalHeightInches, prev.physicalHeightInches),
+        deviceWidthInches: Math.max(c.deviceWidthInches, prev.deviceWidthInches),
+        deviceDepthInches: Math.max(c.deviceDepthInches, prev.deviceDepthInches),
+        sheetPower: c.sheetPower || prev.sheetPower,
+        manufacturer: prev.manufacturer ?? c.manufacturer,
+        model: prev.model ?? c.model,
+        category: (c.category || prev.category || '').trim(),
+        sheetHadHeightColumn: prev.sheetHadHeightColumn || c.sheetHadHeightColumn,
+        sheetHadDepthColumn: prev.sheetHadDepthColumn || c.sheetHadDepthColumn,
+        sheetHadWidthColumn: prev.sheetHadWidthColumn || c.sheetHadWidthColumn,
       });
     }
   }

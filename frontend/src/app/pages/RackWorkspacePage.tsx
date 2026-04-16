@@ -20,7 +20,21 @@ export function RackWorkspacePage() {
   const [deviceDatabaseOpen, setDeviceDatabaseOpen] = useState(false);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-100 via-slate-50 to-white">
+    <div className="rack-workspace-root relative min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-slate-100">
+      <div
+        className="rack-workspace-grid-overlay pointer-events-none absolute inset-0 opacity-[0.08]"
+        aria-hidden
+      >
+        <div
+          className="absolute inset-0"
+          style={{
+            backgroundImage:
+              'linear-gradient(rgba(255,255,255,0.1) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.1) 1px, transparent 1px)',
+            backgroundSize: '50px 50px',
+          }}
+        />
+      </div>
+      <div className="relative z-10">
       <header className="border-b-4 border-[#CC0000] bg-gradient-to-r from-[#003366] via-[#004080] to-[#003366] shadow-xl">
         <div className="mx-auto max-w-[1800px] px-6 py-5">
           <div className="flex items-center justify-between gap-4">
@@ -78,6 +92,7 @@ export function RackWorkspacePage() {
       </main>
 
       <DeviceDatabaseModal isOpen={deviceDatabaseOpen} onClose={() => setDeviceDatabaseOpen(false)} />
+      </div>
     </div>
   );
 }

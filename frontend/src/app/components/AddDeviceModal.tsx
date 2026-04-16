@@ -3,6 +3,9 @@ import { X, Plus, Trash2 } from 'lucide-react';
 import { Device, Port, ConnectorType } from '../data/equipment';
 import { getDeviceDisplayName, inferManufacturerModelFromLegacyName } from '../utils/deviceDisplay';
 import { clampDeviceWidthToRack } from '../utils/rackDevicePlacement';
+import { ensureDeviceCategoryInDb, prefetchDeviceCategories } from '../utils/deviceCategoryCache';
+import { RackCategoryField } from './RackCategoryField';
+import type { CsvUnmatchedQueueItem } from './CsvUnmatchedReviewModal';
 
 const connectorTypes: ConnectorType[] = [
   'HDMI',
@@ -23,8 +26,6 @@ const connectorTypes: ConnectorType[] = [
   'TS',
 ];
 
-const categories: Device['category'][] = ['Camera', 'Laptop', 'Recording Deck', 'Audio', 'Monitor', 'Interface'];
-
 const defaultPorts: Port[] = [{ type: 'HDMI', direction: 'output', label: '' }];
 
 function clonePorts(ports: Port[]): Port[] {
@@ -43,6 +44,8 @@ export interface AddDeviceModalProps {
   cloneSource?: Device | null;
   /** Prefill name (e.g. CSV review → save to database). */
   prefillName?: string | null;
+  /** Snapshot of unmatched CSV row when opening from rack import → add to database. */
+  csvImportRow?: CsvUnmatchedQueueItem | null;
 }
 
 
@@ -54,17 +57,20 @@ export function AddDeviceModal({
   editingDevice = null,
   cloneSource = null,
   prefillName = null,
+  csvImportRow = null,
 }: AddDeviceModalProps) {
   const [manufacturer, setManufacturer] = useState('');
   const [model, setModel] = useState('');
-  const [category, setCategory] = useState<Device['category']>('Camera');
+  const [category, setCategory] = useState('Other');
   const [ports, setPorts] = useState<Port[]>(defaultPorts);
   const [rackHeightU, setRackHeightU] = useState('1');
   const [rackWidthIn, setRackWidthIn] = useState('19');
+  const [rackDepthIn, setRackDepthIn] = useState('');
   const [error, setError] = useState('');
 
   useEffect(() => {
     if (!isOpen) return;
+    void prefetchDeviceCategories();
     setError('');
     if (editingDevice) {
       const m = (editingDevice.manufacturer ?? '').trim();
@@ -81,6 +87,11 @@ export function AddDeviceModal({
       setPorts(clonePorts(editingDevice.ports));
       setRackHeightU(String(Math.max(1, editingDevice.heightInU ?? 1)));
       setRackWidthIn(String(editingDevice.deviceWidthInches ?? 19));
+      setRackDepthIn(
+        editingDevice.deviceDepthInches != null && Number.isFinite(editingDevice.deviceDepthInches)
+          ? String(editingDevice.deviceDepthInches)
+          : '',
+      );
       return;
     }
     if (cloneSource) {
@@ -98,25 +109,52 @@ export function AddDeviceModal({
       setPorts(clonePorts(cloneSource.ports));
       setRackHeightU(String(Math.max(1, cloneSource.heightInU ?? 1)));
       setRackWidthIn(String(cloneSource.deviceWidthInches ?? 19));
+      setRackDepthIn(
+        cloneSource.deviceDepthInches != null && Number.isFinite(cloneSource.deviceDepthInches)
+          ? String(cloneSource.deviceDepthInches)
+          : '',
+      );
+      return;
+    }
+    if (csvImportRow) {
+      const inf = inferManufacturerModelFromLegacyName(csvImportRow.name);
+      setManufacturer(inf.manufacturer);
+      setModel(inf.model);
+      setCategory(csvImportRow.category?.trim() || 'Other');
+      setPorts([...defaultPorts]);
+      setRackHeightU(String(Math.max(1, csvImportRow.heightInU)));
+      if (csvImportRow.sheetHadWidthColumn) {
+        setRackWidthIn(String(csvImportRow.deviceWidthInches ?? 0));
+      } else {
+        setRackWidthIn('19');
+      }
+      if (csvImportRow.sheetHadDepthColumn) {
+        const d = csvImportRow.deviceDepthInches;
+        setRackDepthIn(d != null && Number.isFinite(d) ? String(d) : '');
+      } else {
+        setRackDepthIn('');
+      }
       return;
     }
     if (prefillName?.trim()) {
       const inf = inferManufacturerModelFromLegacyName(prefillName.trim());
       setManufacturer(inf.manufacturer);
       setModel(inf.model);
-      setCategory('Interface');
+      setCategory('Other');
       setPorts([...defaultPorts]);
       setRackHeightU('1');
       setRackWidthIn('19');
+      setRackDepthIn('');
       return;
     }
     setManufacturer('');
     setModel('');
-    setCategory('Camera');
+    setCategory('Other');
     setPorts([...defaultPorts]);
     setRackHeightU('1');
     setRackWidthIn('19');
-  }, [isOpen, editingDevice?.id, cloneSource?.id, prefillName]);
+    setRackDepthIn('');
+  }, [isOpen, editingDevice?.id, cloneSource?.id, prefillName, csvImportRow?.id]);
 
   if (!isOpen) return null;
 
@@ -134,7 +172,7 @@ export function AddDeviceModal({
     setPorts(newPorts);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
@@ -167,6 +205,13 @@ export function AddDeviceModal({
     const wParsed = parseFloat(rackWidthIn);
     const deviceWidthInches = clampDeviceWidthToRack(Number.isFinite(wParsed) ? wParsed : 19, 120);
 
+    const depthTrim = rackDepthIn.trim();
+    let deviceDepthInches: number | undefined;
+    if (depthTrim !== '') {
+      const dp = parseFloat(depthTrim);
+      if (Number.isFinite(dp) && dp >= 0) deviceDepthInches = dp;
+    }
+
     if (ports.length === 0) {
       setError('At least one port is required');
       return;
@@ -181,15 +226,21 @@ export function AddDeviceModal({
     const id =
       editingDevice?.id ?? `custom-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 
+    const catTrim = category.trim();
+    if (catTrim) {
+      await ensureDeviceCategoryInDb(catTrim);
+    }
+
     onSaveDevice({
       id,
       name: displayName,
       manufacturer: mfr,
       model: mdl,
-      category,
+      category: catTrim || 'Other',
       ports: filteredPorts,
       heightInU,
       deviceWidthInches,
+      deviceDepthInches,
     });
 
     onClose();
@@ -227,6 +278,39 @@ export function AddDeviceModal({
             </div>
           )}
 
+          {csvImportRow &&
+            (csvImportRow.sheetHadHeightColumn ||
+              csvImportRow.sheetHadWidthColumn ||
+              csvImportRow.sheetHadDepthColumn) && (
+              <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-950">
+                <div className="font-semibold text-emerald-900">From spreadsheet import</div>
+                <ul className="mt-2 list-inside list-disc space-y-1 text-emerald-900/90">
+                  {csvImportRow.sheetHadHeightColumn && (
+                    <li>
+                      Rack height (U): {csvImportRow.heightInU}
+                      {csvImportRow.physicalHeightInches != null && csvImportRow.physicalHeightInches > 0
+                        ? ` · Face height (in): ${csvImportRow.physicalHeightInches}`
+                        : ''}
+                    </li>
+                  )}
+                  {csvImportRow.sheetHadWidthColumn && (
+                    <li>Rack width (in): {csvImportRow.deviceWidthInches ?? '—'}</li>
+                  )}
+                  {csvImportRow.sheetHadDepthColumn && (
+                    <li>
+                      Depth (in):{' '}
+                      {csvImportRow.deviceDepthInches != null && Number.isFinite(csvImportRow.deviceDepthInches)
+                        ? csvImportRow.deviceDepthInches
+                        : '—'}
+                    </li>
+                  )}
+                </ul>
+                <p className="mt-2 text-xs text-emerald-800/80">
+                  Values below are prefilled from these columns; adjust before saving.
+                </p>
+              </div>
+            )}
+
           <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
               <label className="mb-2 block text-sm font-medium text-gray-700">Manufacturer *</label>
@@ -256,7 +340,7 @@ export function AddDeviceModal({
             </p>
           )}
 
-          <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
             <div>
               <label htmlFor="add-dev-rack-u" className="mb-2 block text-sm font-medium text-gray-700">
                 Rack height (U) *
@@ -281,28 +365,38 @@ export function AddDeviceModal({
                 type="number"
                 min={0.25}
                 max={120}
-                step={0.25}
+                step="any"
                 value={rackWidthIn}
                 onChange={(e) => setRackWidthIn(e.target.value)}
                 className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
               <p className="mt-1 text-xs text-gray-500">Front-panel width (typical rack gear 19&quot;).</p>
             </div>
+            <div>
+              <label htmlFor="add-dev-rack-d" className="mb-2 block text-sm font-medium text-gray-700">
+                Depth (inches)
+              </label>
+              <input
+                id="add-dev-rack-d"
+                type="number"
+                max={120}
+                step="any"
+                value={rackDepthIn}
+                onChange={(e) => setRackDepthIn(e.target.value)}
+                placeholder="Optional"
+                className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <p className="mt-1 text-xs text-gray-500">Face / equipment depth when known.</p>
+            </div>
           </div>
 
           <div className="mb-6">
-            <label className="mb-2 block text-sm font-medium text-gray-700">Category *</label>
-            <select
+            <RackCategoryField
+              label="Category *"
               value={category}
-              onChange={(e) => setCategory(e.target.value as Device['category'])}
-              className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              {categories.map((cat) => (
-                <option key={cat} value={cat}>
-                  {cat}
-                </option>
-              ))}
-            </select>
+              onChange={setCategory}
+              inputClassName="w-full rounded-lg border border-gray-300 px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
           </div>
 
           <div className="mb-6">
