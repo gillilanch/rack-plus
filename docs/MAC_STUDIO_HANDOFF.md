@@ -4,6 +4,30 @@ Operational reference for whoever maintains **Rack+** on the office Mac Studio. 
 
 ---
 
+## New operator checklist
+
+Use this on a **fresh clone** or when taking over the Studio.
+
+1. Install **Node.js (LTS)**, **Git**, and **Homebrew Postgres** (e.g. `postgresql@16`). Run **`whoami`** — you will need that name for `DATABASE_URL`.
+2. **Clone** the repo (`git clone` — not a ZIP). **`cd`** into it.
+3. **`cp backend/.env.macstudio.example backend/.env`**. Edit **`DATABASE_URL`** (user from `whoami`), **`PORT`**, and optional catalog lines (see below).
+4. Start Postgres: **`brew services start postgresql@16`** (or your version). **`createdb rackapp`** if the DB does not exist.
+5. Build and migrate:
+
+   ```bash
+   cd backend && npm ci && npx prisma migrate deploy && npm run build
+   cd ../frontend && npm ci && npm run build
+   ```
+
+6. From the **repo root**, run **`./start.sh`**. If Terminal says “Permission denied”, run **`chmod +x start.sh`** once.
+7. Verify **`http://127.0.0.1:<PORT>/health`** returns **`"ok": true`**. Share the LAN URLs from the top of this doc with staff.
+
+**After every `git pull` that changes code or dependencies:** repeat step 5 (at least `npm ci` where lockfiles changed, `prisma migrate deploy`, both **`npm run build`**), then restart **`./start.sh`** (or launchd / PM2).
+
+**Google Sheet catalog:** if you set **`FOX_CATALOG_CSV_URL`**, the sheet must be shared **Anyone with the link → Viewer** so the server can fetch the CSV (see comments in `backend/.env.macstudio.example`).
+
+---
+
 ## URLs (same port for UI + API)
 
 With **`PORT=4000`** in `backend/.env` (default), staff typically use:
@@ -204,6 +228,10 @@ Harmless Node.js warning from a dependency. Safe to ignore, or run with `NODE_NO
 - Same **Wi‑Fi / LAN** as the Studio.
 - **Firewall** on macOS: allow incoming for the Node process / port if prompted.
 - **IP changed** — use `Foxs-Mac-Studio.local` or re-check `ipconfig getifaddr`; consider a **DHCP reservation** for the Studio.
+
+### `EADDRINUSE` / “port already in use”
+
+Another process is using **`PORT`** (default `4000`). Stop the other **`node`** / old **`./start.sh`** Terminal, or set a different **`PORT`** in **`backend/.env`** and use that in all URLs.
 
 ### Git: “divergent branches”
 
