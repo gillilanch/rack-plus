@@ -1,8 +1,8 @@
+import './loadEnv';
 import path from 'path';
 import fs from 'fs';
 import express from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
 import { prisma } from './db/client';
 import { racksRouter } from './routes/racks';
 import { employeesRouter } from './routes/employees';
@@ -15,8 +15,6 @@ import {
   syncCatalogFromConfiguredUrl,
   syncCatalogFromGoogleSheet,
 } from './services/catalogSync';
-
-dotenv.config();
 
 /** Minimum catalog poll interval (ms). Below this, scheduled sync is disabled to avoid hammering Google CSV export. */
 const MIN_CATALOG_SYNC_INTERVAL_MS = 5_000;
