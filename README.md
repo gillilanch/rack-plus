@@ -180,6 +180,8 @@ pm2 startup   # run the command it prints (often needs sudo)
 
 ### Handoff quick reference
 
+**Fox Mac Studio (LAN URLs, Postgres, `backend/.env`, git pull issues):** see **[`docs/MAC_STUDIO_HANDOFF.md`](docs/MAC_STUDIO_HANDOFF.md)**.
+
 | Problem | Try |
 |---------|-----|
 | Site down | `http://<server>:<PORT>/health` → `{"ok":true}`? |
