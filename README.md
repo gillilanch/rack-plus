@@ -13,6 +13,8 @@ Rack configure. Connect.
 **Health check:** `http://<host>:4000/health` → should return `{"ok":true}`.  
 If you change **`PORT`** in `backend/.env`, use that port in every URL above.
 
+## LINK TO SPREADSHEET PULLING DATA FROM AVCAD
+** https://docs.google.com/spreadsheets/d/13aci_txPa9jII7c7MccJdVHicMuQZQECIsBW6Ewof2c/edit?gid=1613961878#gid=1613961878 ** 
 ---
 
 ## **Production on the Mac Studio — run `./start.sh` (required)**
