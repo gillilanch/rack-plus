@@ -18,9 +18,14 @@ if [[ ! -f "$ROOT/frontend/dist/index.html" ]]; then
   exit 1
 fi
 
-PORT=4001
-if [[ -f "$ROOT/backend/.env" ]] && grep -q '^PORT=' "$ROOT/backend/.env"; then
-  PORT="$(grep '^PORT=' "$ROOT/backend/.env" | head -1 | cut -d= -f2 | tr -d ' "'\''')"
+# Same port the server uses: dotenv from backend/.env, default 4000 (see server.ts).
+PORT=4000
+if [[ -f "$ROOT/backend/.env" ]]; then
+  if [[ -d "$ROOT/backend/node_modules/dotenv" ]]; then
+    PORT="$(cd "$ROOT/backend" && node -p "require('dotenv').config(); process.env.PORT || '4000'")"
+  elif grep -qE '^[[:space:]]*PORT=' "$ROOT/backend/.env"; then
+    PORT="$(grep -E '^[[:space:]]*PORT=' "$ROOT/backend/.env" | head -1 | sed -E 's/^[[:space:]]*PORT[[:space:]]*=[[:space:]]*//;s/[[:space:]]+$//;s/^[\"'\'']|[\"'\'']$//g')"
+  fi
 fi
 
 cd "$ROOT/backend"
