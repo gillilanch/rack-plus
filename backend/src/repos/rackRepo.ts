@@ -36,6 +36,7 @@ export async function listRacks() {
       totalHeightU: true,
       rackWidthInches: true,
       rackDepthInches: true,
+      createdAt: true,
       updatedAt: true,
       savedByDisplayName: true,
       savedByVerified: true,

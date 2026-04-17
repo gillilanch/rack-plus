@@ -78,8 +78,8 @@ function resolveFoxCatalogColumns(headerLower: string[]): FoxCatalogColIdx {
   const mi = idx('manufacturer');
   const moi = idx('model');
   const ci = idx('category');
-  if (mi < 0 || moi < 0 || ci < 0) {
-    throw new Error('CSV must include Manufacturer, Model, and Category columns');
+  if (mi < 0 || moi < 0) {
+    throw new Error('CSV must include Manufacturer and Model columns');
   }
   const pi = idx('power');
   const wi = idx('width');
@@ -91,6 +91,7 @@ function resolveFoxCatalogColumns(headerLower: string[]): FoxCatalogColIdx {
   return {
     manufacturer: mi,
     model: moi,
+    /** -1 if no Category column — rows default to Other */
     category: ci,
     power: pi,
     width: wi,
@@ -108,7 +109,8 @@ function rowStringsToCatalogDevice(row: string[], col: FoxCatalogColIdx): Catalo
   if (!manufacturer && !model) return null;
   if (!manufacturer || !model) return null;
 
-  const sheetCategory = (row[col.category] ?? '').trim() || 'Other';
+  const sheetCategory =
+    col.category >= 0 ? ((row[col.category] ?? '').trim() || 'Other') : 'Other';
   const appCategory = mapSheetCategoryToAppCategory(sheetCategory);
   const power = col.power >= 0 ? (row[col.power] ?? '').trim() || null : null;
   const widthInches = col.width >= 0 ? parseNumber(row[col.width] ?? '') : null;
@@ -289,7 +291,13 @@ export type CatalogDeviceClientJson = {
   name: string;
   manufacturer: string;
   model: string;
+  /**
+   * Google Sheet “Category” cell (Device, Lighting, Network Switch, …).
+   * Not the legacy `appCategory` bucket — see `appCategory` for that.
+   */
   category: string;
+  /** Legacy coarse bucket (Camera / Audio / Interface / …) from `mapSheetCategoryToAppCategory`. */
+  appCategory: string;
   ports: ReturnType<typeof catalogPortsFromJson>;
   heightInU: number;
   deviceWidthInches: number;
@@ -303,6 +311,12 @@ export type CatalogDeviceClientJson = {
   notes?: string | null;
 };
 
+/** Remove one catalog row by primary key (e.g. device database UI). */
+export async function deleteCatalogDeviceById(id: string): Promise<boolean> {
+  const r = await prisma.catalogDevice.deleteMany({ where: { id } });
+  return r.count > 0;
+}
+
 export async function listCatalogDevicesJson(): Promise<CatalogDeviceClientJson[]> {
   const rows = await prisma.catalogDevice.findMany({
     orderBy: [{ manufacturer: 'asc' }, { model: 'asc' }],
@@ -314,12 +328,14 @@ export async function listCatalogDevicesJson(): Promise<CatalogDeviceClientJson[
       r.heightInches != null && Number.isFinite(r.heightInches) ? r.heightInches : null;
     const deviceDepthInches =
       r.depthInches != null && Number.isFinite(r.depthInches) ? r.depthInches : null;
+    const sheet = r.sheetCategory?.trim() || '';
     return {
       id: r.id,
       name,
       manufacturer: r.manufacturer,
       model: r.model,
-      category: r.appCategory,
+      category: sheet || r.appCategory,
+      appCategory: r.appCategory,
       ports: catalogPortsFromJson(r.ports),
       heightInU: r.heightInU,
       deviceWidthInches,

@@ -1,8 +1,26 @@
 import type { ConnectablePair } from './cableFinder';
 import type { Port } from '../data/equipment';
 import type { RackCableVisualEdge, RackConnection, RackDevice } from '../types/rack';
+import { deviceFaceHorizontalSpanPx } from './rackDevicePlacement';
 import { minCableInchesBetweenPlacedDevices, roundCableLengthInches } from './rackCableMetrics';
+import { DEFAULT_RACK_WIDTH_INCHES } from './rackUnits';
 import { findMatchingPortPairs } from './rackConnections';
+
+/** Same left or same right edge on both devices so the run stays on one side of the rack face. */
+export function sharedRackEdgeForDevices(
+  from: RackDevice,
+  to: RackDevice,
+  rackWidthPx: number,
+  rackWidthInches: number,
+): RackCableVisualEdge {
+  const rw = rackWidthInches > 0 ? rackWidthInches : DEFAULT_RACK_WIDTH_INCHES;
+  const a = deviceFaceHorizontalSpanPx(from, rackWidthPx, rw);
+  const b = deviceFaceHorizontalSpanPx(to, rackWidthPx, rw);
+  const cxA = a.leftPx + a.widthPx / 2;
+  const cxB = b.leftPx + b.widthPx / 2;
+  const cx = (cxA + cxB) / 2;
+  return cx < rackWidthPx / 2 ? 'left' : 'right';
+}
 
 export function portsEqual(a: Port, b: Port): boolean {
   return (
@@ -64,10 +82,13 @@ export function connectionFromSuggestedPair(
   pair: ConnectablePair,
   inchesPerRU: number,
   slackFeet: number,
+  rackWidthPx: number,
+  rackWidthInches: number,
 ): RackConnection {
   const minIn = minCableInchesBetweenPlacedDevices(from, to, inchesPerRU, slackFeet);
   const cableType = pair.solution.cable?.name ?? `${pair.fromPort.type}→${pair.toPort.type}`;
   const adapters = pair.solution.adapters?.map((a) => a.name);
+  const edge = sharedRackEdgeForDevices(from, to, rackWidthPx, rackWidthInches);
   return {
     id: `conn-${from.id}-${to.id}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     fromDeviceId: from.id,
@@ -80,8 +101,8 @@ export function connectionFromSuggestedPair(
     minCableLengthInches: minIn,
     extraSlackInches: 0,
     cableStyle: 'suggested',
-    routeFromEdge: 'right',
-    routeToEdge: 'left',
+    routeFromEdge: edge,
+    routeToEdge: edge,
     routeFromYRatio: 0.5,
     routeToYRatio: 0.5,
   };

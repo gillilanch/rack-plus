@@ -3,7 +3,7 @@ import express, { Router } from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { prisma } from '../db/client';
-import { listCatalogDevicesJson } from '../repos/catalogDeviceRepo';
+import { deleteCatalogDeviceById, listCatalogDevicesJson } from '../repos/catalogDeviceRepo';
 import { syncCatalogFromCsvText, syncCatalogFromStructuredRows } from '../services/catalogSync';
 import { syncCatalogFromGoogleSheet } from '../services/googleSheetsCatalog';
 
@@ -34,6 +34,25 @@ catalogRouter.get('/devices', async (_req, res, next) => {
     const rows = await listCatalogDevicesJson();
     res.setHeader('Cache-Control', 'public, max-age=30');
     res.json(rows);
+  } catch (e) {
+    next(e);
+  }
+});
+
+/** Delete one Postgres catalog row. Same auth as sync webhooks (`X-Catalog-Webhook-Secret`). */
+catalogRouter.delete('/devices/:id', requireCatalogWebhookSecret, async (req, res, next) => {
+  try {
+    const id = typeof req.params.id === 'string' ? req.params.id.trim() : '';
+    if (!id) {
+      res.status(400).json({ error: 'Missing device id' });
+      return;
+    }
+    const ok = await deleteCatalogDeviceById(id);
+    if (!ok) {
+      res.status(404).json({ error: 'Catalog device not found' });
+      return;
+    }
+    res.json({ ok: true });
   } catch (e) {
     next(e);
   }
@@ -158,7 +177,7 @@ async function handleStructuredCatalogSync(req: Request, res: Response, next: Ne
     if (!raw) {
       res.status(400).json({
         error:
-          'Send a JSON array of row objects, or { "rows": [ ... ] }. Each row needs manufacturer, model, and category.',
+          'Send a JSON array of row objects, or { "rows": [ ... ] }. Each row needs manufacturer and model; other fields optional.',
       });
       return;
     }

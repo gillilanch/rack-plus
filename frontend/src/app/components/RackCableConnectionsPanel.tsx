@@ -67,9 +67,9 @@ export function RackCableConnectionsPanel({ devices }: RackCableConnectionsPanel
 
   return (
     <div className="shrink-0 border-t border-slate-600/80 pt-6">
-      <div className="mb-4 rounded-lg border border-sky-800/60 bg-sky-950/40 p-3">
-        <h3 className="font-semibold text-sky-100">Connections between rack devices</h3>
-        <p className="mt-1 text-sm text-sky-200/90">
+      <div className="mb-4 rounded-xl border border-slate-600/90 bg-slate-950/70 p-4 ring-1 ring-slate-800/80">
+        <h3 className="text-base font-bold tracking-tight text-slate-100">Connections between rack devices</h3>
+        <p className="mt-2 text-sm leading-relaxed text-slate-400">
           Pick two devices from this rack (same list as above). We suggest cables and adapters from their ports.
           Add or edit ports on each device via the rack editor when needed.
         </p>
@@ -83,7 +83,7 @@ export function RackCableConnectionsPanel({ devices }: RackCableConnectionsPanel
         embeddedSurface="dark"
       />
 
-      <div className="rounded-lg border border-slate-600/80 bg-slate-900/50 p-4">
+      <div className="rounded-xl border border-slate-600/90 bg-slate-950/50 p-4 ring-1 ring-slate-800/60">
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_auto_1fr]">
           <DeviceSelector
             devices={cableDevices}
@@ -91,9 +91,10 @@ export function RackCableConnectionsPanel({ devices }: RackCableConnectionsPanel
             onSelectDevice={((d: Device | null) => setFromId(d?.id ?? null)) as (d: Device) => void}
             label="From (source)"
             placeholder="Select source…"
+            variant="dark"
           />
           <div className="hidden items-center justify-center pt-8 lg:flex">
-            <ArrowRight className="size-7 text-slate-500" />
+            <ArrowRight className="size-7 text-cyan-500/60" />
           </div>
           <DeviceSelector
             devices={cableDevices}
@@ -101,6 +102,7 @@ export function RackCableConnectionsPanel({ devices }: RackCableConnectionsPanel
             onSelectDevice={((d: Device | null) => setToId(d?.id ?? null)) as (d: Device) => void}
             label="To (destination)"
             placeholder="Select destination…"
+            variant="dark"
           />
         </div>
         <div className="mt-4 flex flex-wrap gap-2">
@@ -110,8 +112,8 @@ export function RackCableConnectionsPanel({ devices }: RackCableConnectionsPanel
             disabled={!canFind}
             className={`flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold transition-all ${
               canFind
-                ? 'bg-blue-600 text-white shadow-sm hover:bg-blue-700'
-                : 'cursor-not-allowed bg-slate-700 text-slate-500'
+                ? 'bg-cyan-600 text-white shadow-md shadow-cyan-950/40 hover:bg-cyan-500'
+                : 'cursor-not-allowed bg-slate-800 text-slate-600'
             }`}
           >
             <Cable className="size-4" />
@@ -121,7 +123,7 @@ export function RackCableConnectionsPanel({ devices }: RackCableConnectionsPanel
             <button
               type="button"
               onClick={handleReset}
-              className="flex items-center gap-2 rounded-lg border border-slate-500 bg-slate-800 px-4 py-2.5 text-sm font-semibold text-slate-200 transition-colors hover:bg-slate-700"
+              className="flex items-center gap-2 rounded-lg border border-slate-600 bg-slate-900 px-4 py-2.5 text-sm font-semibold text-slate-200 transition-colors hover:border-slate-500 hover:bg-slate-800"
             >
               <RefreshCw className="size-4" />
               Reset
@@ -129,19 +131,24 @@ export function RackCableConnectionsPanel({ devices }: RackCableConnectionsPanel
           )}
         </div>
         {fromId !== null && toId !== null && fromId === toId && (
-          <p className="mt-2 text-sm text-amber-300">Choose two different devices.</p>
+          <p className="mt-2 text-sm text-amber-400/95">Choose two different devices.</p>
         )}
       </div>
 
       {showResults && fromCable && toCable && (
-        <div className="mt-4 rounded-lg border border-slate-600/80 bg-slate-900/70 p-4 shadow-sm">
+        <div className="mt-4 rounded-xl border border-slate-600/90 bg-slate-950/60 p-4 ring-1 ring-slate-800/70">
           {solutions.length === 0 ? (
             <p className="text-sm text-slate-400">
               No compatible path found from these port definitions. Open a device on the rack and add inputs/outputs
               that match your gear.
             </p>
           ) : (
-            <ConnectionResults solutions={solutions} fromDevice={fromCable} toDevice={toCable} />
+            <ConnectionResults
+              solutions={solutions}
+              fromDevice={fromCable}
+              toDevice={toCable}
+              variant="dark"
+            />
           )}
         </div>
       )}

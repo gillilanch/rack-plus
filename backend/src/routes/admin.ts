@@ -286,6 +286,7 @@ api.get('/racks', async (_req, res, next) => {
         rackWidthInches: r.rackWidthInches,
         rackDepthInches: r.rackDepthInches,
         deviceCount: r._count.devices,
+        createdAt: r.createdAt.toISOString(),
         updatedAt: r.updatedAt.toISOString(),
         savedByDisplayName: r.savedByDisplayName,
         savedByVerified: r.savedByVerified,

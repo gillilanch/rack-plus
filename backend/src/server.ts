@@ -18,8 +18,8 @@ import {
 
 dotenv.config();
 
-/** Minimum catalog poll interval (ms). Below this, scheduled sync is disabled to avoid hammering Google/file sources. */
-const MIN_CATALOG_SYNC_INTERVAL_MS = 15_000;
+/** Minimum catalog poll interval (ms). Below this, scheduled sync is disabled to avoid hammering Google CSV export. */
+const MIN_CATALOG_SYNC_INTERVAL_MS = 5_000;
 
 function catalogPruneMissingFromEnv(): boolean {
   const v = process.env.FOX_CATALOG_PRUNE_ON_SYNC?.trim().toLowerCase();

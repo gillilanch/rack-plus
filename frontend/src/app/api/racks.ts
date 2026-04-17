@@ -19,6 +19,8 @@ export type RackSummary = {
   /** Present after API / DB support rack depth; older responses may omit. */
   rackDepthInches?: number;
   deviceCount: number;
+  /** ISO timestamp — present after backend includes `createdAt` in list. */
+  createdAt?: string;
   updatedAt: string;
   savedByDisplayName?: string | null;
   savedByVerified?: boolean;
@@ -66,6 +68,14 @@ export async function createRack(
     }),
   });
   return handleJson(res);
+}
+
+export async function deleteRack(id: string): Promise<void> {
+  const res = await fetch(apiUrl(`${pathRacks}/${encodeURIComponent(id)}`), { method: 'DELETE' });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error || res.statusText);
+  }
 }
 
 export async function saveRack(

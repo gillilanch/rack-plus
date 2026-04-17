@@ -49,6 +49,8 @@ function sanitizeCatalogPorts(raw: unknown[]): Port[] {
 function normalizeRow(row: Record<string, unknown>): Device | null {
   if (typeof row.id !== 'string' || typeof row.name !== 'string') return null;
   const category = typeof row.category === 'string' ? row.category : 'Other';
+  const appCategory =
+    typeof row.appCategory === 'string' && row.appCategory.trim() ? row.appCategory.trim() : undefined;
   const ports = Array.isArray(row.ports) ? sanitizeCatalogPorts(row.ports as unknown[]) : [];
   return {
     id: row.id,
@@ -56,6 +58,7 @@ function normalizeRow(row: Record<string, unknown>): Device | null {
     manufacturer: typeof row.manufacturer === 'string' ? row.manufacturer : undefined,
     model: typeof row.model === 'string' ? row.model : undefined,
     category,
+    ...(appCategory ? { appCategory } : {}),
     ports,
     heightInU: typeof row.heightInU === 'number' ? row.heightInU : undefined,
     deviceWidthInches:
@@ -71,6 +74,34 @@ function normalizeRow(row: Record<string, unknown>): Device | null {
 
 export function getServerCatalogDevices(): Device[] {
   return cached;
+}
+
+export type DeleteCatalogDeviceResult = 'ok' | 'no_secret' | 'not_configured' | 'not_found' | 'unauthorized' | 'error';
+
+/**
+ * DELETE row in Postgres when `VITE_CATALOG_WEBHOOK_SECRET` matches backend `CATALOG_WEBHOOK_SECRET`.
+ * On success, updates in-memory cache and dispatches {@link FOX_SERVER_CATALOG_CHANGED_EVENT}.
+ */
+export async function deleteCatalogDeviceOnServer(deviceId: string): Promise<DeleteCatalogDeviceResult> {
+  const secret = (import.meta.env.VITE_CATALOG_WEBHOOK_SECRET as string | undefined)?.trim();
+  if (!secret) return 'no_secret';
+  try {
+    const r = await fetch(apiUrl(`/api/catalog/devices/${encodeURIComponent(deviceId)}`), {
+      method: 'DELETE',
+      headers: { 'X-Catalog-Webhook-Secret': secret },
+    });
+    if (r.status === 503) return 'not_configured';
+    if (r.status === 401) return 'unauthorized';
+    if (r.status === 404) return 'not_found';
+    if (!r.ok) return 'error';
+    cached = cached.filter((d) => d.id !== deviceId);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent(FOX_SERVER_CATALOG_CHANGED_EVENT));
+    }
+    return 'ok';
+  } catch {
+    return 'error';
+  }
 }
 
 /**

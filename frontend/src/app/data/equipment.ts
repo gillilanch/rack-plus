@@ -23,8 +23,13 @@ export interface Device {
   manufacturer?: string;
   /** Model name or number (searchable). */
   model?: string;
-  /** Free-form (rack + custom gear); built-in rows still use familiar labels. */
+  /**
+   * Category label for UI: Google Sheet “Category” for AVCAD/Postgres catalog rows; free-form for custom gear;
+   * built-ins use familiar labels.
+   */
   category: string;
+  /** When from server catalog: legacy coarse bucket (Camera, Audio, Interface, …). Usually omitted in UI. */
+  appCategory?: string;
   ports: Port[];
   /** Default rack height (U) when adding from Fox/custom database (optional on built-in catalog). */
   heightInU?: number;
@@ -38,6 +43,11 @@ export interface Device {
   sheetPower?: string;
   /** Catalog / sheet notes; copied to rack `deviceNotes` when placed. */
   notes?: string;
+  /**
+   * Browser-saved device only: when set, this entry supersedes the built-in or server catalog row with this id
+   * (the catalog row is hidden in the device database until this entry is removed).
+   */
+  replacesCatalogDeviceId?: string;
 }
 
 export interface Cable {

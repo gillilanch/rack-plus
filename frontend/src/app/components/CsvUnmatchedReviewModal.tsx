@@ -43,20 +43,20 @@ export function CsvUnmatchedReviewModal({
       aria-labelledby="csv-unmatched-title"
       aria-modal="true"
     >
-      <div className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl">
-        <div className="flex shrink-0 items-center justify-between border-b border-gray-200 px-5 py-4">
+      <div className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-slate-600/80 bg-slate-900 shadow-2xl ring-1 ring-slate-500/30">
+        <div className="flex shrink-0 items-center justify-between border-b border-slate-600/80 px-5 py-4">
           <div>
-            <h2 id="csv-unmatched-title" className="text-lg font-bold text-gray-900">
+            <h2 id="csv-unmatched-title" className="font-cable-ui text-lg font-bold text-slate-100">
               Names not in device database
             </h2>
-            <p className="mt-1 text-sm text-gray-600">
+            <p className="mt-1 text-sm text-slate-400">
               These values from your CSV did not match the built-in or Fox equipment list. Choose what to do for each.
             </p>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+            className="rounded-lg p-2 text-slate-400 transition-colors hover:bg-slate-700 hover:text-slate-200"
             aria-label="Close"
           >
             <X className="size-5" />
@@ -68,10 +68,10 @@ export function CsvUnmatchedReviewModal({
             {items.map((item) => (
               <li
                 key={item.id}
-                className="rounded-lg border border-gray-200 bg-gray-50 p-4 shadow-sm"
+                className="rounded-lg border border-slate-600/70 bg-slate-800/70 p-4 shadow-sm"
               >
-                <div className="mb-3 font-medium text-gray-900">{item.name}</div>
-                <div className="mb-3 text-xs text-gray-500">
+                <div className="mb-3 font-medium text-slate-100">{item.name}</div>
+                <div className="mb-3 text-xs text-slate-400">
                   {item.heightInU}U · {item.category}
                   {item.physicalHeightInches != null && ` · ${item.physicalHeightInches}"`}
                 </div>
@@ -79,7 +79,7 @@ export function CsvUnmatchedReviewModal({
                   <button
                     type="button"
                     onClick={() => onAddToDatabase(item.id)}
-                    className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-700"
+                    className="flex items-center gap-1.5 rounded-lg bg-sky-600 px-3 py-2 text-xs font-medium text-white hover:bg-sky-500"
                   >
                     <Database className="size-3.5" />
                     Add &amp; save to database
@@ -87,7 +87,7 @@ export function CsvUnmatchedReviewModal({
                   <button
                     type="button"
                     onClick={() => onAddToRackOnly(item.id)}
-                    className="flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs font-medium text-gray-800 hover:bg-gray-50"
+                    className="flex items-center gap-1.5 rounded-lg border border-slate-500/80 bg-slate-800/80 px-3 py-2 text-xs font-medium text-slate-200 hover:bg-slate-700/90"
                   >
                     <Package className="size-3.5" />
                     Add to rack only
@@ -95,7 +95,7 @@ export function CsvUnmatchedReviewModal({
                   <button
                     type="button"
                     onClick={() => onReject(item.id)}
-                    className="flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium text-red-800 hover:bg-red-100"
+                    className="flex items-center gap-1.5 rounded-lg border border-red-800/60 bg-red-950/50 px-3 py-2 text-xs font-medium text-red-200 hover:bg-red-950/80"
                   >
                     <Ban className="size-3.5" />
                     Reject
@@ -106,7 +106,7 @@ export function CsvUnmatchedReviewModal({
           </ul>
         </div>
 
-        <div className="shrink-0 border-t border-gray-100 px-5 py-3 text-center text-xs text-gray-500">
+        <div className="shrink-0 border-t border-slate-600/80 px-5 py-3 text-center text-xs text-slate-500">
           Close this panel when you are done — remaining rows will stay here until you act on them.
         </div>
       </div>

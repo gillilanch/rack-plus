@@ -8,6 +8,8 @@ import {
   clampDeviceWidthToRack,
   clampHorizontalOffset,
   DEFAULT_DEVICE_WIDTH_INCHES,
+  parseDeviceWidthInchesInput,
+  parseHorizontalOffsetInchesInput,
 } from '../utils/rackDevicePlacement';
 import { RackCategoryField } from './RackCategoryField';
 
@@ -36,12 +38,20 @@ function DevicePortSection({
   setEditedDevice,
   inchesPerRU,
   rackWidthInches,
+  faceWidthStr,
+  setFaceWidthStr,
+  faceOffsetStr,
+  setFaceOffsetStr,
 }: {
   title: string;
   editedDevice: RackDevice;
   setEditedDevice: (d: RackDevice) => void;
   inchesPerRU: number;
   rackWidthInches: number;
+  faceWidthStr: string;
+  setFaceWidthStr: (s: string) => void;
+  faceOffsetStr: string;
+  setFaceOffsetStr: (s: string) => void;
 }) {
   const handleAddPort = () => {
     setEditedDevice({
@@ -63,13 +73,17 @@ function DevicePortSection({
     setEditedDevice({ ...editedDevice, ports: newPorts });
   };
 
+  const fieldCls =
+    'w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500';
+  const selectCls = 'rounded border border-slate-600 bg-slate-900 px-2 py-1 text-sm text-slate-100';
+
   return (
     <div className="space-y-4">
-      <h3 className="text-lg font-semibold text-gray-900">{title}</h3>
-      <p className="text-sm text-gray-600">{getDeviceDisplayName(editedDevice)}</p>
+      <h3 className="text-lg font-semibold text-slate-100">{title}</h3>
+      <p className="text-sm text-slate-400">{getDeviceDisplayName(editedDevice)}</p>
 
-      <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
-        <h4 className="mb-2 text-sm font-medium text-gray-800">Category & height</h4>
+      <div className="rounded-lg border border-slate-600 bg-slate-800/80 p-4">
+        <h4 className="mb-2 text-sm font-medium text-slate-200">Category & height</h4>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <RackCategoryField
@@ -77,11 +91,12 @@ function DevicePortSection({
               showHint={false}
               value={editedDevice.category}
               onChange={(cat) => setEditedDevice({ ...editedDevice, category: cat })}
-              inputClassName="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              labelClassName="mb-1 block text-xs font-medium text-slate-400"
+              inputClassName="w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500"
             />
           </div>
           <div>
-            <label className="mb-1 block text-xs font-medium text-gray-600">Rack height (U)</label>
+            <label className="mb-1 block text-xs font-medium text-slate-400">Rack height (U)</label>
             <input
               type="number"
               min={1}
@@ -95,11 +110,11 @@ function DevicePortSection({
                   physicalHeightInches: inchesFromRU(u, inchesPerRU),
                 });
               }}
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+              className={fieldCls}
             />
           </div>
           <div className="sm:col-span-2">
-            <label className="mb-1 block text-xs font-medium text-gray-600">Physical height (inches)</label>
+            <label className="mb-1 block text-xs font-medium text-slate-400">Physical height (inches)</label>
             <input
               type="number"
               min={0}
@@ -120,54 +135,54 @@ function DevicePortSection({
                   });
                 }
               }}
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+              className={fieldCls}
             />
           </div>
           <div>
-            <label className="mb-1 block text-xs font-medium text-gray-600">Device width (inches)</label>
+            <label className="mb-1 block text-xs font-medium text-slate-400">Device width (inches)</label>
             <input
-              type="number"
-              min={0.25}
-              max={rackWidthInches}
-              step={0.25}
-              value={editedDevice.deviceWidthInches ?? DEFAULT_DEVICE_WIDTH_INCHES}
-              onChange={(e) => {
-                const n = parseFloat(e.target.value);
-                const width = Number.isFinite(n) ? clampDeviceWidthToRack(n, rackWidthInches) : DEFAULT_DEVICE_WIDTH_INCHES;
+              type="text"
+              inputMode="decimal"
+              autoComplete="off"
+              placeholder={`${DEFAULT_DEVICE_WIDTH_INCHES}`}
+              value={faceWidthStr}
+              onChange={(e) => setFaceWidthStr(e.target.value)}
+              onBlur={() => {
+                const width = parseDeviceWidthInchesInput(faceWidthStr, rackWidthInches);
+                setFaceWidthStr(String(width));
                 setEditedDevice({
                   ...editedDevice,
                   deviceWidthInches: width,
                   horizontalOffsetInches: clampHorizontalOffset(
-                    editedDevice.horizontalOffsetInches ?? 0,
+                    parseHorizontalOffsetInchesInput(faceOffsetStr, width, rackWidthInches),
                     width,
                     rackWidthInches,
                   ),
                 });
               }}
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+              className={fieldCls}
             />
           </div>
           <div>
-            <label className="mb-1 block text-xs font-medium text-gray-600">Offset from left (inches)</label>
+            <label className="mb-1 block text-xs font-medium text-slate-400">Offset from left (inches)</label>
             <input
-              type="number"
-              min={0}
-              max={Math.max(
-                0,
-                rackWidthInches - (editedDevice.deviceWidthInches ?? DEFAULT_DEVICE_WIDTH_INCHES),
-              )}
-              step={0.25}
-              value={editedDevice.horizontalOffsetInches ?? 0}
-              onChange={(e) => {
-                const n = parseFloat(e.target.value);
-                const width = clampDeviceWidthToRack(
-                  editedDevice.deviceWidthInches ?? DEFAULT_DEVICE_WIDTH_INCHES,
-                  rackWidthInches,
-                );
-                const off = Number.isFinite(n) ? clampHorizontalOffset(n, width, rackWidthInches) : 0;
-                setEditedDevice({ ...editedDevice, horizontalOffsetInches: off, deviceWidthInches: width });
+              type="text"
+              inputMode="decimal"
+              autoComplete="off"
+              placeholder="0"
+              value={faceOffsetStr}
+              onChange={(e) => setFaceOffsetStr(e.target.value)}
+              onBlur={() => {
+                const width = parseDeviceWidthInchesInput(faceWidthStr, rackWidthInches);
+                const off = parseHorizontalOffsetInchesInput(faceOffsetStr, width, rackWidthInches);
+                setFaceOffsetStr(String(off));
+                setEditedDevice({
+                  ...editedDevice,
+                  deviceWidthInches: width,
+                  horizontalOffsetInches: off,
+                });
               }}
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+              className={fieldCls}
             />
           </div>
         </div>
@@ -175,29 +190,29 @@ function DevicePortSection({
 
       <div>
         <div className="mb-2 flex items-center justify-between">
-          <span className="text-sm font-medium text-gray-700">Ports ({editedDevice.ports.length})</span>
+          <span className="text-sm font-medium text-slate-300">Ports ({editedDevice.ports.length})</span>
           <button
             type="button"
             onClick={handleAddPort}
-            className="flex items-center gap-1 rounded-lg bg-blue-50 px-3 py-1 text-sm text-blue-600 hover:bg-blue-100"
+            className="flex items-center gap-1 rounded-lg bg-sky-950/80 px-3 py-1 text-sm text-sky-300 hover:bg-sky-900/90"
           >
             <Plus className="size-4" />
             Add port
           </button>
         </div>
         {editedDevice.ports.length === 0 ? (
-          <div className="rounded-lg border-2 border-dashed border-gray-300 p-6 text-center text-sm text-gray-500">
+          <div className="rounded-lg border-2 border-dashed border-slate-600 p-6 text-center text-sm text-slate-500">
             No ports — add ports so a cable can match.
           </div>
         ) : (
           <div className="space-y-2">
             {editedDevice.ports.map((port, index) => (
-              <div key={index} className="flex gap-2 rounded-lg border border-gray-200 bg-gray-50 p-2">
+              <div key={index} className="flex gap-2 rounded-lg border border-slate-600 bg-slate-800/60 p-2">
                 <div className="grid flex-1 grid-cols-1 gap-2 sm:grid-cols-3">
                   <select
                     value={port.type}
                     onChange={(e) => handlePortChange(index, 'type', e.target.value)}
-                    className="rounded border border-gray-300 px-2 py-1 text-sm"
+                    className={selectCls}
                   >
                     {connectorTypes.map((t) => (
                       <option key={t} value={t}>
@@ -208,7 +223,7 @@ function DevicePortSection({
                   <select
                     value={port.direction}
                     onChange={(e) => handlePortChange(index, 'direction', e.target.value)}
-                    className="rounded border border-gray-300 px-2 py-1 text-sm"
+                    className={selectCls}
                   >
                     <option value="input">Input</option>
                     <option value="output">Output</option>
@@ -219,13 +234,13 @@ function DevicePortSection({
                     value={port.label || ''}
                     onChange={(e) => handlePortChange(index, 'label', e.target.value)}
                     placeholder="Label"
-                    className="rounded border border-gray-300 px-2 py-1 text-sm"
+                    className={selectCls}
                   />
                 </div>
                 <button
                   type="button"
                   onClick={() => handleRemovePort(index)}
-                  className="p-2 text-red-500 hover:bg-red-50"
+                  className="p-2 text-red-400 hover:bg-red-950/50"
                 >
                   <Trash2 className="size-4" />
                 </button>
@@ -268,35 +283,47 @@ export function RackDualDeviceEditor({
   const [a, setA] = useState<RackDevice>(deviceA);
   const [b, setB] = useState<RackDevice>(deviceB);
   const [tab, setTab] = useState<'a' | 'b'>('a');
+  const [faceWidthStrA, setFaceWidthStrA] = useState('');
+  const [faceOffsetStrA, setFaceOffsetStrA] = useState('');
+  const [faceWidthStrB, setFaceWidthStrB] = useState('');
+  const [faceOffsetStrB, setFaceOffsetStrB] = useState('');
 
   useEffect(() => {
     setA({ ...deviceA });
     setB({ ...deviceB });
     setTab('a');
+    const wa = deviceA.deviceWidthInches;
+    setFaceWidthStrA(wa != null && Number.isFinite(wa) ? String(wa) : '');
+    const oa = deviceA.horizontalOffsetInches;
+    setFaceOffsetStrA(oa != null && Number.isFinite(oa) ? String(oa) : '');
+    const wb = deviceB.deviceWidthInches;
+    setFaceWidthStrB(wb != null && Number.isFinite(wb) ? String(wb) : '');
+    const ob = deviceB.horizontalOffsetInches;
+    setFaceOffsetStrB(ob != null && Number.isFinite(ob) ? String(ob) : '');
   }, [deviceA, deviceB, isOpen]);
 
   if (!isOpen) return null;
 
   return (
-    <div className="no-print fixed inset-0 z-[80] flex items-center justify-center bg-black/50 p-4">
-      <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-xl bg-white shadow-2xl">
-        <div className="sticky top-0 flex items-center justify-between border-b border-gray-200 bg-white px-6 py-4">
+    <div className="no-print fixed inset-0 z-[80] flex items-center justify-center bg-black/60 p-4">
+      <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-xl border border-slate-600 bg-slate-900 shadow-2xl ring-1 ring-slate-500/25">
+        <div className="sticky top-0 flex items-center justify-between border-b border-slate-600 bg-slate-900 px-6 py-4">
           <div>
-            <h2 className="text-xl font-bold text-gray-900">Reconfigure devices</h2>
-            <p className="text-sm text-gray-600">Edit ports on both devices, then save to retry the cable.</p>
+            <h2 className="text-xl font-bold text-slate-100">Reconfigure devices</h2>
+            <p className="text-sm text-slate-400">Edit ports on both devices, then save to retry the cable.</p>
           </div>
-          <button type="button" onClick={onClose} className="text-gray-400 hover:text-gray-600">
+          <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-200">
             <X className="size-6" />
           </button>
         </div>
 
-        <div className="border-b border-gray-100 px-6 pt-4">
+        <div className="border-b border-slate-600 px-6 pt-4">
           <div className="flex gap-2">
             <button
               type="button"
               onClick={() => setTab('a')}
               className={`rounded-t-lg px-4 py-2 text-sm font-medium ${
-                tab === 'a' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                tab === 'a' ? 'bg-sky-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
               }`}
             >
               {getDeviceDisplayName(a)}
@@ -305,7 +332,7 @@ export function RackDualDeviceEditor({
               type="button"
               onClick={() => setTab('b')}
               className={`rounded-t-lg px-4 py-2 text-sm font-medium ${
-                tab === 'b' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                tab === 'b' ? 'bg-sky-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
               }`}
             >
               {getDeviceDisplayName(b)}
@@ -321,6 +348,10 @@ export function RackDualDeviceEditor({
               setEditedDevice={setA}
               inchesPerRU={inchesPerRU}
               rackWidthInches={rackWidthInches}
+              faceWidthStr={faceWidthStrA}
+              setFaceWidthStr={setFaceWidthStrA}
+              faceOffsetStr={faceOffsetStrA}
+              setFaceOffsetStr={setFaceOffsetStrA}
             />
           ) : (
             <DevicePortSection
@@ -329,22 +360,35 @@ export function RackDualDeviceEditor({
               setEditedDevice={setB}
               inchesPerRU={inchesPerRU}
               rackWidthInches={rackWidthInches}
+              faceWidthStr={faceWidthStrB}
+              setFaceWidthStr={setFaceWidthStrB}
+              faceOffsetStr={faceOffsetStrB}
+              setFaceOffsetStr={setFaceOffsetStrB}
             />
           )}
         </div>
 
-        <div className="sticky bottom-0 flex justify-end gap-3 border-t border-gray-200 bg-white px-6 py-4">
+        <div className="sticky bottom-0 flex justify-end gap-3 border-t border-slate-600 bg-slate-900 px-6 py-4">
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg border border-gray-300 px-6 py-2 text-gray-700 hover:bg-gray-50"
+            className="rounded-lg border border-slate-500 px-6 py-2 text-slate-200 hover:bg-slate-800"
           >
             Cancel
           </button>
           <button
             type="button"
-            onClick={() => onSave(a, b)}
-            className="rounded-lg bg-blue-600 px-6 py-2 font-semibold text-white hover:bg-blue-700"
+            onClick={() => {
+              const wa = parseDeviceWidthInchesInput(faceWidthStrA, rackWidthInches);
+              const oa = parseHorizontalOffsetInchesInput(faceOffsetStrA, wa, rackWidthInches);
+              const wb = parseDeviceWidthInchesInput(faceWidthStrB, rackWidthInches);
+              const ob = parseHorizontalOffsetInchesInput(faceOffsetStrB, wb, rackWidthInches);
+              onSave(
+                { ...a, deviceWidthInches: wa, horizontalOffsetInches: oa },
+                { ...b, deviceWidthInches: wb, horizontalOffsetInches: ob },
+              );
+            }}
+            className="rounded-lg bg-sky-600 px-6 py-2 font-semibold text-white hover:bg-sky-500"
           >
             Save both
           </button>

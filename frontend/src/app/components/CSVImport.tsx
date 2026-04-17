@@ -18,11 +18,19 @@ import {
 } from '../utils/csvGridExtract';
 import { extractCandidatesFromXmlFile } from '../utils/xmlPartsImport';
 import type { RackConnection, RackDevice } from '../types/rack';
+import { mergeCsvCandidateWithCatalogDevice } from '../utils/csvImportCatalogMerge';
+import { buildRackDevicesTemplateCsv } from '../utils/rackTemplateCsv';
+import { DEFAULT_RACK_DEPTH_INCHES, DEFAULT_RACK_WIDTH_INCHES } from '../utils/rackUnits';
 import type { CsvUnmatchedQueueItem } from './CsvUnmatchedReviewModal';
 
-/** Passed from the rack planner for optional CSV export features; reserved for future use. */
+/** Passed from the rack planner for CSV export (current rack snapshot). */
 export type CsvRackExportContext = {
+  rackName?: string;
+  totalHeightU: number;
+  rackWidthInches: number;
+  rackDepthInches: number;
   placedDevices: RackDevice[];
+  unassignedDevices: RackDevice[];
   connections: RackConnection[];
 };
 
@@ -57,6 +65,12 @@ interface CSVImportProps {
   surface?: 'light' | 'dark';
   /** Appended to the dashed drop zone (e.g. min-h + flex) so it matches a paired panel on the build rack screen. */
   dashedPanelExtraClass?: string;
+  /** Omit the in-panel “Import rack parts list” title when the parent supplies a column heading. */
+  hideImportHeading?: boolean;
+  /** Larger body + button (e.g. rack sidebar two-column “Add more devices” row). */
+  largeTypography?: boolean;
+  /** When true, the “Review … CSV names” control is not rendered here (parent renders full-width). */
+  suppressPendingReviewButton?: boolean;
 }
 
 function partitionCandidates(
@@ -82,17 +96,19 @@ function partitionCandidates(
       const mfr = (c.manufacturer ?? resolved.device.manufacturer ?? '').trim();
       const mdl = (c.model ?? resolved.device.model ?? '').trim();
       if (!existing) {
+        const merged = mergeCsvCandidateWithCatalogDevice(c, resolved.device, dbCategoryNames);
         matchedMap.set(key, {
           id: `imported-${batchId}-m-${mIdx++}`,
           name: c.text,
           manufacturer: mfr,
           model: mdl,
-          category: resolveImportCategory(c.category, dbCategoryNames),
-          heightInU: Math.max(1, c.heightInU),
-          physicalHeightInches: c.physicalHeightInches > 0 ? c.physicalHeightInches : undefined,
-          deviceWidthInches: c.deviceWidthInches,
-          deviceDepthInches: c.deviceDepthInches,
-          sheetPower: c.sheetPower.trim() || undefined,
+          heightInU: merged.heightInU,
+          physicalHeightInches: merged.physicalHeightInches,
+          deviceWidthInches: merged.deviceWidthInches,
+          deviceDepthInches: merged.deviceDepthInches,
+          sheetPower: merged.sheetPower,
+          deviceNotes: merged.deviceNotes,
+          category: merged.category,
           ports: resolved.device.ports.length > 0 ? [...resolved.device.ports] : [],
         });
         if (resolved.match === 'exact') exact += 1;
@@ -144,17 +160,37 @@ function partitionCandidates(
       const mfr = (u.manufacturer ?? second.device.manufacturer ?? '').trim();
       const mdl = (u.model ?? second.device.model ?? '').trim();
       if (!existing) {
+        const merged = mergeCsvCandidateWithCatalogDevice(
+          {
+            text: u.name,
+            heightInU: u.heightInU,
+            category: u.category,
+            physicalHeightInches: u.physicalHeightInches ?? 0,
+            fromNameColumn: true,
+            manufacturer: u.manufacturer,
+            model: u.model,
+            deviceWidthInches: u.deviceWidthInches ?? 0,
+            deviceDepthInches: u.deviceDepthInches ?? 0,
+            sheetPower: u.sheetPower ?? '',
+            sheetHadHeightColumn: u.sheetHadHeightColumn ?? false,
+            sheetHadDepthColumn: u.sheetHadDepthColumn ?? false,
+            sheetHadWidthColumn: u.sheetHadWidthColumn ?? false,
+          },
+          second.device,
+          dbCategoryNames,
+        );
         matchedMap.set(key, {
           id: `imported-${batchId}-m-${mIdx++}`,
           name: u.name,
           manufacturer: mfr,
           model: mdl,
-          category: resolveImportCategory(u.category, dbCategoryNames),
-          heightInU: Math.max(1, u.heightInU),
-          physicalHeightInches: u.physicalHeightInches && u.physicalHeightInches > 0 ? u.physicalHeightInches : undefined,
-          deviceWidthInches: u.deviceWidthInches,
-          deviceDepthInches: u.deviceDepthInches,
-          sheetPower: u.sheetPower?.trim() || undefined,
+          heightInU: merged.heightInU,
+          physicalHeightInches: merged.physicalHeightInches,
+          deviceWidthInches: merged.deviceWidthInches,
+          deviceDepthInches: merged.deviceDepthInches,
+          sheetPower: merged.sheetPower,
+          deviceNotes: merged.deviceNotes,
+          category: merged.category,
           ports: second.device.ports.length > 0 ? [...second.device.ports] : [],
         });
         if (second.match === 'exact') exact += 1;
@@ -200,9 +236,13 @@ export function CSVImport({
   onCsvImportComplete,
   pendingUnmatchedCount = 0,
   onReopenCsvReview,
+  rackExportContext,
   showCsvDownload = true,
   surface = 'light',
   dashedPanelExtraClass = '',
+  hideImportHeading = false,
+  largeTypography = false,
+  suppressPendingReviewButton = false,
 }: CSVImportProps) {
   const dim = surface === 'dark';
   const pairedLanding = dashedPanelExtraClass.trim().length > 0;
@@ -212,21 +252,22 @@ export function CSVImport({
   const [matchSummary, setMatchSummary] = useState<ImportMatchSummary | null>(null);
 
 
-  /* placeholder CSV, change to parse through images */ 
-  
   const handleDownloadTemplate = () => {
-    const template = `name,category,heightInches
-Sony FX6,Camera,7.5
-MacBook Pro (M3),Laptop,1.75
-Focusrite Scarlett 2i2,Audio,1.75
-Dell UltraSharp U2720Q,Monitor,14.5
-Unlisted part number XYZ,Interface,2`;
-
-    const blob = new Blob([template], { type: 'text/csv' });
+    const csv = buildRackDevicesTemplateCsv(
+      rackExportContext ?? {
+        totalHeightU: 42,
+        rackWidthInches: DEFAULT_RACK_WIDTH_INCHES,
+        rackDepthInches: DEFAULT_RACK_DEPTH_INCHES,
+        placedDevices: [],
+        unassignedDevices: [],
+        connections: [],
+      },
+    );
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = 'rack_parts_template.csv';
+    link.download = 'rack_devices.csv';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -412,12 +453,16 @@ Unlisted part number XYZ,Interface,2`;
           </div>
 
           <div>
-            <h3
-              className={`mb-1 font-semibold ${dim ? 'font-cable-ui text-slate-100' : 'text-gray-900'}`}
+            {!hideImportHeading && (
+              <h3
+                className={`mb-1 font-semibold ${largeTypography ? 'text-lg sm:text-xl' : ''} ${dim ? 'font-cable-ui text-slate-100' : 'text-gray-900'}`}
+              >
+                Import rack parts list
+              </h3>
+            )}
+            <p
+              className={`${largeTypography ? 'text-base sm:text-[1.05rem] leading-relaxed' : 'text-sm'} ${dim ? 'font-cable-ui text-slate-400' : 'text-gray-600'}`}
             >
-              Import rack parts list
-            </h3>
-            <p className={`text-sm ${dim ? 'font-cable-ui text-slate-400' : 'text-gray-600'}`}>
               Upload CSV/TXT (sheet cells) or XML (tables, or tags like part/item/device). Matched names join the rack;
               others open a review panel.
             </p>
@@ -426,7 +471,7 @@ Unlisted part number XYZ,Interface,2`;
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            className="flex items-center gap-2 rounded-lg bg-[#003366] px-6 py-2 font-medium text-white transition-colors hover:bg-blue-700"
+            className={`flex items-center gap-2 rounded-lg bg-[#003366] font-medium text-white transition-colors hover:bg-blue-700 ${largeTypography ? 'px-8 py-3 text-base sm:text-lg' : 'px-6 py-2'}`}
           >
             <Upload className="size-5" />
             Choose file
@@ -434,11 +479,11 @@ Unlisted part number XYZ,Interface,2`;
         </div>
       </div>
 
-      {pendingUnmatchedCount > 0 && onReopenCsvReview && (
+      {pendingUnmatchedCount > 0 && onReopenCsvReview && !suppressPendingReviewButton && (
         <button
           type="button"
           onClick={onReopenCsvReview}
-          className={`flex w-full items-center justify-center gap-2 rounded-lg border px-4 py-3 text-sm font-medium ${
+          className={`flex w-full items-center justify-center gap-2 rounded-lg border px-4 py-3 font-medium ${largeTypography ? 'text-base sm:text-[1.05rem]' : 'text-sm'} ${
             dim
               ? 'border-amber-700/60 bg-amber-950/40 text-amber-100 hover:bg-amber-950/60'
               : 'border-amber-300 bg-amber-50 text-amber-950 hover:bg-amber-100'
@@ -510,42 +555,6 @@ Unlisted part number XYZ,Interface,2`;
         </div>
       )}
 
-      <div
-        className={`rounded-lg border p-4 ${
-          dim ? 'border-sky-800/50 bg-sky-950/35' : 'border-blue-200 bg-blue-50'
-        }`}
-      >
-        <div className={`mb-2 text-sm font-medium ${dim ? 'text-sky-100' : 'text-blue-900'}`}>CSV and XML</div>
-        <div className={`space-y-1 text-xs ${dim ? 'text-sky-200/90' : 'text-blue-800'}`}>
-          <div>
-            <strong>CSV full sheet:</strong> Header rows: one device per data row; duplicate <em>names</em> in the file
-            merge into one line. Numbers-only cells are ignored. There is no fixed row cap — the full file is parsed.
-          </div>
-          <div>
-            <strong>Server catalog (Google Sheet / CSV → Postgres):</strong> Set backend env (see admin page): optional{' '}
-            <code className={`rounded px-1 ${dim ? 'bg-slate-800 text-slate-200' : 'bg-white'}`}>FOX_CATALOG_CSV_FETCH_AUTHORIZATION</code> /{' '}
-            <code className={`rounded px-1 ${dim ? 'bg-slate-800 text-slate-200' : 'bg-white'}`}>FOX_CATALOG_CSV_FETCH_HEADERS_JSON</code> for a private CSV URL;{' '}
-            <code className={`rounded px-1 ${dim ? 'bg-slate-800 text-slate-200' : 'bg-white'}`}>CATALOG_WEBHOOK_SECRET</code> + POST{' '}
-            <code className={`rounded px-1 ${dim ? 'bg-slate-800 text-slate-200' : 'bg-white'}`}>/api/catalog/sync-webhook</code> for a private sheet without a public link.{' '}
-            <code className={`rounded px-1 ${dim ? 'bg-slate-800 text-slate-200' : 'bg-white'}`}>FOX_CATALOG_SYNC_INTERVAL_MS</code> (≥ 15s; use webhook for instant) upserts into{' '}
-            <code className={`rounded px-1 ${dim ? 'bg-slate-800 text-slate-200' : 'bg-white'}`}>/api/catalog/devices</code>. Frontend reloads that
-            list on load; optional <code className={`rounded px-1 ${dim ? 'bg-slate-800 text-slate-200' : 'bg-white'}`}>VITE_CATALOG_POLL_MS</code> in{' '}
-            <code className={`rounded px-1 ${dim ? 'bg-slate-800 text-slate-200' : 'bg-white'}`}>.env.development</code> refreshes the catalog while the app stays open.
-          </div>
-          <div>
-            <strong>CSV with headers:</strong> Use <code className={`rounded px-1 ${dim ? 'bg-slate-800 text-slate-200' : 'bg-white'}`}>name</code>,{' '}
-            <code className={`rounded px-1 ${dim ? 'bg-slate-800 text-slate-200' : 'bg-white'}`}>category</code>,{' '}
-            <code className={`rounded px-1 ${dim ? 'bg-slate-800 text-slate-200' : 'bg-white'}`}>heightInches</code> or{' '}
-            <code className={`rounded px-1 ${dim ? 'bg-slate-800 text-slate-200' : 'bg-white'}`}>heightU</code> on the row that contains each name.
-          </div>
-          <div>
-            <strong>XML:</strong> HTML-style tables (<code className={`rounded px-1 ${dim ? 'bg-slate-800 text-slate-200' : 'bg-white'}`}>&lt;tr&gt;&lt;td&gt;</code>
-            ), row/cell grids, or elements named part, item, device, etc. Export from tools like AvCAD works when the
-            file is well-formed XML with readable part names.
-          </div>
-        </div>
-      </div>
-
       {showCsvDownload && (
         <button
           type="button"
@@ -553,7 +562,7 @@ Unlisted part number XYZ,Interface,2`;
           className="flex items-center gap-2 rounded-lg bg-[#003366] px-6 py-2 font-medium text-white transition-colors hover:bg-blue-700"
         >
           <Download className="size-5" />
-          Download template
+          Export CSV of devices
         </button>
       )}
     </div>

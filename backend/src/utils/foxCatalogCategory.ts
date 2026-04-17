@@ -1,4 +1,7 @@
-/** Map AVCAD sheet category strings to Rack+ device categories (same buckets as frontend). */
+/**
+ * Maps Google Sheet category text to a coarse legacy bucket for storage (`appCategory`).
+ * The catalog API still returns the **raw sheet** string as `category` for UI (dropdowns, labels).
+ */
 export type AppDeviceCategory =
   | 'Camera'
   | 'Laptop'

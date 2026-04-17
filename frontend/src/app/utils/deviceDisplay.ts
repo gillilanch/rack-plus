@@ -68,6 +68,23 @@ export function getDeviceDisplayName(d: { name: string; manufacturer?: string; m
   return (d.name ?? '').trim();
 }
 
+/** When both parts exist (or inferred from legacy `name`), show manufacturer + model on two lines in the rack. */
+export function getDeviceIdentityTwoLines(d: {
+  name: string;
+  manufacturer?: string;
+  model?: string;
+}): { manufacturer: string; model: string } | null {
+  let m = (d.manufacturer ?? '').trim();
+  let md = (d.model ?? '').trim();
+  if (!m && !md && (d.name ?? '').trim()) {
+    const inf = inferManufacturerModelFromLegacyName(d.name);
+    m = inf.manufacturer;
+    md = inf.model;
+  }
+  if (m && md) return { manufacturer: m, model: md };
+  return null;
+}
+
 /** Lowercase string used for autocomplete / fuzzy match (includes parts separately so "Yamaha" hits all Yamaha rows). */
 export function getDeviceSearchBlob(d: { name: string; manufacturer?: string; model?: string }): string {
   const parts = [

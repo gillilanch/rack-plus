@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
+import { useCallback, useEffect, useMemo, useRef, startTransition, useState } from 'react';
 import {
   X,
   Search,
@@ -9,6 +10,7 @@ import {
   Plus,
   Database,
   Users,
+  Download,
 } from 'lucide-react';
 import type { Device } from '../data/equipment';
 import { devices as builtInDevices } from '../data/equipment';
@@ -28,10 +30,18 @@ import { FOX_EMPLOYEES_CHANGED_EVENT, mergeFoxEmployeeLists } from '../utils/fox
 import { AddDeviceModal } from './AddDeviceModal';
 import { getDeviceDisplayName, getDeviceSearchBlob } from '../utils/deviceDisplay';
 import {
+  deleteCatalogDeviceOnServer,
   FOX_SERVER_CATALOG_CHANGED_EVENT,
   getServerCatalogDevices,
   prefetchServerCatalogDevices,
 } from '../utils/serverCatalogCache';
+import {
+  getHiddenBuiltinDeviceIds,
+  getHiddenServerCatalogDeviceIds,
+  hideBuiltinDeviceId,
+  hideServerCatalogDeviceId,
+} from '../utils/deviceDatabaseHiddenIds';
+import { buildEquipmentDatabaseCsv } from '../utils/rackTemplateCsv';
 
 interface DeviceDatabaseModalProps {
   isOpen: boolean;
@@ -39,6 +49,8 @@ interface DeviceDatabaseModalProps {
 }
 
 type DbTab = 'equipment' | 'employees';
+
+type EquipmentSource = 'builtin' | 'server' | 'local';
 
 function matchesSearch(device: Device, q: string): boolean {
   if (!q.trim()) return true;
@@ -67,7 +79,7 @@ export function DeviceDatabaseModal({ isOpen, onClose }: DeviceDatabaseModalProp
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingDevice, setEditingDevice] = useState<Device | null>(null);
-  const [cloneSource, setCloneSource] = useState<Device | null>(null);
+  const [catalogPrefill, setCatalogPrefill] = useState<Device | null>(null);
 
   const [directoryNames, setDirectoryNames] = useState<string[]>([]);
   const [directoryLoading, setDirectoryLoading] = useState(false);
@@ -79,6 +91,8 @@ export function DeviceDatabaseModal({ isOpen, onClose }: DeviceDatabaseModalProp
   const [serverCatalog, setServerCatalog] = useState<Device[]>([]);
   const [serverCatalogLoading, setServerCatalogLoading] = useState(false);
   const [serverCatalogError, setServerCatalogError] = useState<string | null>(null);
+  /** Bumps when client-side hidden-id sets change so the equipment list re-derives. */
+  const [hiddenCatalogRev, setHiddenCatalogRev] = useState(0);
 
   const refreshCustom = useCallback(() => setCustom(getCustomDevices()), []);
 
@@ -158,24 +172,58 @@ export function DeviceDatabaseModal({ isOpen, onClose }: DeviceDatabaseModalProp
     return () => window.removeEventListener(FOX_EMPLOYEES_CHANGED_EVENT, fn);
   }, [loadEmployeeCatalog]);
 
-  const filteredServerCatalog = useMemo(
-    () => serverCatalog.filter((d) => matchesSearch(d, search)),
-    [serverCatalog, search],
+  const replacedCatalogIds = useMemo(
+    () =>
+      new Set(
+        custom
+          .map((d) => d.replacesCatalogDeviceId)
+          .filter((x): x is string => typeof x === 'string' && x.length > 0),
+      ),
+    [custom],
   );
 
-  const filteredCustom = useMemo(
-    () => custom.filter((d) => matchesSearch(d, search)),
-    [custom, search],
+  const unifiedEquipment = useMemo(() => {
+    const hiddenBuiltin = getHiddenBuiltinDeviceIds();
+    const hiddenServer = getHiddenServerCatalogDeviceIds();
+    const rows: { key: string; device: Device; source: EquipmentSource }[] = [];
+    for (const d of builtInDevices) {
+      if (replacedCatalogIds.has(d.id) || hiddenBuiltin.has(d.id)) continue;
+      rows.push({ key: `builtin:${d.id}`, device: d, source: 'builtin' });
+    }
+    for (const d of serverCatalog) {
+      if (replacedCatalogIds.has(d.id) || hiddenServer.has(d.id)) continue;
+      rows.push({ key: `srv:${d.id}`, device: d, source: 'server' });
+    }
+    for (const d of custom) {
+      rows.push({ key: `local:${d.id}`, device: d, source: 'local' });
+    }
+    rows.sort((a, b) =>
+      getDeviceDisplayName(a.device).localeCompare(getDeviceDisplayName(b.device), undefined, {
+        sensitivity: 'base',
+      }),
+    );
+    return rows;
+  }, [serverCatalog, custom, replacedCatalogIds, hiddenCatalogRev]);
+
+  const filteredUnified = useMemo(
+    () => unifiedEquipment.filter((row) => matchesSearch(row.device, search)),
+    [unifiedEquipment, search],
   );
 
-  const filteredDirectory = useMemo(
-    () => directoryNames.filter((n) => matchesName(n, employeeSearch)),
-    [directoryNames, employeeSearch],
-  );
+  const employeeRows = useMemo(() => {
+    const merged = mergeFoxEmployeeLists(directoryNames, extraNames);
+    const dirLc = new Set(directoryNames.map((n) => n.trim().toLowerCase()).filter(Boolean));
+    return merged.map((name) => {
+      const lc = name.trim().toLowerCase();
+      const inExtra = extraNames.some((e) => e.trim().toLowerCase() === lc);
+      const canRemove = inExtra && !dirLc.has(lc);
+      return { name, canRemove };
+    });
+  }, [directoryNames, extraNames]);
 
-  const filteredExtras = useMemo(
-    () => extraNames.filter((n) => matchesName(n, employeeSearch)),
-    [extraNames, employeeSearch],
+  const filteredEmployeeRows = useMemo(
+    () => employeeRows.filter((r) => matchesName(r.name, employeeSearch)),
+    [employeeRows, employeeSearch],
   );
 
   const employeeUniqueCount = useMemo(
@@ -190,6 +238,17 @@ export function DeviceDatabaseModal({ isOpen, onClose }: DeviceDatabaseModalProp
     return [...fromBuiltIn, ...fromCustom, ...fromServer];
   }, [custom, editingDevice?.id, serverCatalog]);
 
+  /** Only mount visible rows so closing the edit modal does not block the main thread reconciling the full catalog. */
+  const deviceDbScrollRef = useRef<HTMLDivElement>(null);
+  const equipmentVirtualizer = useVirtualizer({
+    count: tab === 'equipment' ? filteredUnified.length : 0,
+    getScrollElement: () => deviceDbScrollRef.current,
+    estimateSize: () => 100,
+    gap: 12,
+    overscan: 10,
+    getItemKey: (index) => filteredUnified[index]?.key ?? `eq-${index}`,
+  });
+
   const toggleExpand = (id: string) => {
     setExpandedIds((prev) => {
       const next = new Set(prev);
@@ -199,26 +258,48 @@ export function DeviceDatabaseModal({ isOpen, onClose }: DeviceDatabaseModalProp
     });
   };
 
+  const handleDownloadEquipmentCsv = useCallback(() => {
+    const csv = buildEquipmentDatabaseCsv(unifiedEquipment.map((row) => row.device));
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'equipment_database.csv';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }, [unifiedEquipment]);
+
   const closeEditor = () => {
-    setEditorOpen(false);
-    setEditingDevice(null);
-    setCloneSource(null);
+    startTransition(() => {
+      setEditorOpen(false);
+      setEditingDevice(null);
+      setCatalogPrefill(null);
+    });
   };
 
   const openAdd = () => {
     setEditingDevice(null);
-    setCloneSource(null);
+    setCatalogPrefill(null);
     setEditorOpen(true);
   };
 
   const openEdit = (d: Device) => {
-    setCloneSource(null);
+    setCatalogPrefill(null);
     setEditingDevice(d);
     setEditorOpen(true);
   };
 
+  /** Edit a built-in or server row: saves as a browser device that hides the original catalog entry. */
+  const openEditCatalogRow = (d: Device) => {
+    setEditingDevice(null);
+    setCatalogPrefill(d);
+    setEditorOpen(true);
+  };
+
   const handleSaveDevice = (device: Device) => {
-    if (editingDevice) {
+    if (editingDevice && !catalogPrefill) {
       updateCustomDevice(device);
     } else {
       saveCustomDevice(device);
@@ -226,11 +307,35 @@ export function DeviceDatabaseModal({ isOpen, onClose }: DeviceDatabaseModalProp
     refreshCustom();
   };
 
-  const handleDelete = (d: Device) => {
-    if (!window.confirm(`Remove “${getDeviceDisplayName(d)}” from your Fox equipment database?`)) return;
-    deleteCustomDevice(d.id);
-    refreshCustom();
-  };
+  const handleDeleteEquipment = useCallback(
+    async (device: Device, source: EquipmentSource) => {
+      const label = getDeviceDisplayName(device);
+      if (!window.confirm(`Remove “${label}”?`)) return;
+
+      if (source === 'local') {
+        deleteCustomDevice(device.id);
+        refreshCustom();
+        return;
+      }
+
+      if (source === 'builtin') {
+        hideBuiltinDeviceId(device.id);
+        setHiddenCatalogRev((n) => n + 1);
+        return;
+      }
+
+      if (source === 'server') {
+        const result = await deleteCatalogDeviceOnServer(device.id);
+        if (result === 'ok') {
+          setServerCatalog(getServerCatalogDevices());
+          return;
+        }
+        hideServerCatalogDeviceId(device.id);
+        setHiddenCatalogRev((n) => n + 1);
+      }
+    },
+    [refreshCustom],
+  );
 
   const handleAddEmployee = async () => {
     setNewEmployeeError(null);
@@ -271,54 +376,53 @@ export function DeviceDatabaseModal({ isOpen, onClose }: DeviceDatabaseModalProp
         role="presentation"
       >
         <div
-          className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl"
+          className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-slate-600/80 bg-slate-900 shadow-2xl ring-1 ring-slate-500/25"
           role="dialog"
           aria-labelledby="device-db-title"
           onClick={(e) => e.stopPropagation()}
         >
-          <div className="flex shrink-0 items-center justify-between border-b border-gray-200 px-5 py-4">
+          <div className="flex shrink-0 items-center justify-between border-b border-slate-600/80 px-5 py-4">
             <div className="flex items-center gap-2">
-              <Database className="size-6 text-blue-600" />
-              <h2 id="device-db-title" className="text-xl font-bold text-gray-900">
-                Device database
+              <Database className="size-6 text-sky-400" />
+              <h2 id="device-db-title" className="font-cable-ui text-xl font-bold text-slate-100">
+                Edit database
               </h2>
             </div>
             <button
               type="button"
               onClick={onClose}
-              className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+              className="rounded-lg p-2 text-slate-400 transition-colors hover:bg-slate-700 hover:text-slate-200"
               aria-label="Close"
             >
               <X className="size-6" />
             </button>
           </div>
 
-          <p className="border-b border-gray-100 px-5 py-3 text-sm text-gray-600">
-            <span className="font-medium">AVCAD catalog</span> is the equipment list synced to this server (Google
-            Sheet webhook or CSV). <span className="font-medium">Your equipment</span> is extra devices saved in this
-            browser for autocomplete and cable suggestions. <span className="font-medium">Fox employees</span> lists
-            the directory from this server plus names added here (also used when saving a rack).
+          <p className="border-b border-slate-600/80 px-5 py-3 text-sm text-slate-400">
+            <span className="font-medium text-slate-200">Equipment</span> — search the list, add devices, or open a row to
+            view details and edit. <span className="font-medium text-slate-200">Fox employees</span> is the name list used
+            when saving racks.
           </p>
 
-          <div className="flex gap-1 border-b border-gray-200 px-5 pt-3">
+          <div className="flex gap-1 border-b border-slate-600/80 px-5 pt-3">
             <button
               type="button"
               onClick={() => setTab('equipment')}
               className={`rounded-t-lg px-4 py-2 text-sm font-medium transition-colors ${
                 tab === 'equipment'
-                  ? 'bg-gray-100 text-gray-900'
-                  : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+                  ? 'bg-slate-800 text-slate-100'
+                  : 'text-slate-400 hover:bg-slate-800/60 hover:text-slate-200'
               }`}
             >
-              Equipment ({serverCatalog.length} server · {custom.length} local)
+              Equipment ({unifiedEquipment.length})
             </button>
             <button
               type="button"
               onClick={() => setTab('employees')}
               className={`flex items-center gap-1.5 rounded-t-lg px-4 py-2 text-sm font-medium transition-colors ${
                 tab === 'employees'
-                  ? 'bg-gray-100 text-gray-900'
-                  : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+                  ? 'bg-slate-800 text-slate-100'
+                  : 'text-slate-400 hover:bg-slate-800/60 hover:text-slate-200'
               }`}
             >
               <Users className="size-4" />
@@ -327,26 +431,53 @@ export function DeviceDatabaseModal({ isOpen, onClose }: DeviceDatabaseModalProp
           </div>
 
           {tab === 'equipment' && (
-            <div className="shrink-0 border-b border-gray-100 px-5 py-3">
+            <div className="shrink-0 space-y-3 border-b border-slate-600/80 px-5 py-3">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch">
+                <button
+                  type="button"
+                  onClick={openAdd}
+                  className="flex min-h-[2.75rem] flex-1 items-center justify-center gap-2 rounded-lg border-2 border-dashed border-sky-700/60 bg-sky-950/35 px-3 py-3 text-sm font-medium text-sky-100 transition-colors hover:bg-sky-950/55"
+                >
+                  <Plus className="size-4 shrink-0" />
+                  Add device to your equipment
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDownloadEquipmentCsv}
+                  disabled={unifiedEquipment.length === 0}
+                  className="flex min-h-[2.75rem] shrink-0 items-center justify-center gap-2 rounded-lg border border-slate-600 bg-slate-800/90 px-4 py-3 text-sm font-medium text-slate-100 transition-colors hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50 sm:min-w-[11rem]"
+                  title={
+                    unifiedEquipment.length === 0
+                      ? 'No devices to export'
+                      : 'Download all equipment as CSV (same columns as rack template)'
+                  }
+                >
+                  <Download className="size-4 shrink-0" />
+                  Download CSV
+                </button>
+              </div>
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-gray-400" />
+                <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-500" />
                 <input
                   type="search"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search catalog and your equipment by name, category, or connector…"
-                  className="w-full rounded-lg border border-gray-300 py-2 pl-10 pr-3 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Search by name, category, or connector…"
+                  className="w-full rounded-lg border border-slate-600 bg-slate-800/80 py-2 pl-10 pr-3 text-sm text-slate-100 placeholder:text-slate-500 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-sky-500"
                 />
               </div>
             </div>
           )}
 
           {tab === 'employees' && (
-            <div className="shrink-0 space-y-3 border-b border-gray-100 px-5 py-3">
+            <div className="shrink-0 space-y-3 border-b border-slate-600/80 px-5 py-3">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
                 <div className="min-w-0 flex-1">
-                  <label htmlFor="fox-emp-add" className="mb-1 block text-xs font-semibold uppercase text-gray-500">
-                    Add name (this server)
+                  <label
+                    htmlFor="fox-emp-add"
+                    className="mb-1 block text-xs font-semibold uppercase text-slate-500"
+                  >
+                    Add name
                   </label>
                   <input
                     id="fox-emp-add"
@@ -360,181 +491,136 @@ export function DeviceDatabaseModal({ isOpen, onClose }: DeviceDatabaseModalProp
                       if (e.key === 'Enter') handleAddEmployee();
                     }}
                     placeholder="e.g. Jamie Fox"
-                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full rounded-lg border border-slate-600 bg-slate-800/80 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-sky-500"
                   />
                 </div>
                 <button
                   type="button"
                   onClick={handleAddEmployee}
-                  className="flex shrink-0 items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+                  className="flex shrink-0 items-center justify-center gap-2 rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-500"
                 >
                   <Plus className="size-4" />
                   Add name
                 </button>
               </div>
-              {newEmployeeError && <p className="text-sm text-red-600">{newEmployeeError}</p>}
+              {newEmployeeError && <p className="text-sm text-red-400">{newEmployeeError}</p>}
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-gray-400" />
+                <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-500" />
                 <input
                   type="search"
                   value={employeeSearch}
                   onChange={(e) => setEmployeeSearch(e.target.value)}
                   placeholder="Search employees…"
-                  className="w-full rounded-lg border border-gray-300 py-2 pl-10 pr-3 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full rounded-lg border border-slate-600 bg-slate-800/80 py-2 pl-10 pr-3 text-sm text-slate-100 placeholder:text-slate-500 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-sky-500"
                 />
               </div>
             </div>
           )}
 
-          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+          <div
+            ref={deviceDbScrollRef}
+            className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4 [scrollbar-gutter:stable]"
+          >
             {tab === 'equipment' && (
-              <div className="space-y-6">
-                <section>
-                  <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-gray-500">
-                    AVCAD catalog (this server)
-                  </h3>
-                  {serverCatalogLoading && (
-                    <p className="text-sm text-gray-500">Loading catalog from server…</p>
-                  )}
-                  {serverCatalogError && (
-                    <p className="mb-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-                      {serverCatalogError}
-                    </p>
-                  )}
-                  {!serverCatalogLoading && !serverCatalogError && serverCatalog.length === 0 && (
-                    <p className="text-sm text-gray-500">
-                      No devices in Postgres yet. Push the sheet with your Apps Script webhook, or load a CSV on the
-                      server, then open this dialog again.
-                    </p>
-                  )}
-                  {!serverCatalogLoading &&
-                    serverCatalog.length > 0 &&
-                    filteredServerCatalog.length === 0 && (
-                      <p className="text-sm text-gray-500">No catalog rows match your search.</p>
-                    )}
-                  <ul className="space-y-3">
-                    {filteredServerCatalog.map((d) => (
-                      <DeviceDbRow
-                        key={`srv:${d.id}`}
-                        device={d}
-                        expanded={expandedIds.has(`srv:${d.id}`)}
-                        onToggle={() => toggleExpand(`srv:${d.id}`)}
-                        variantLabel="Server catalog"
-                        badgeTone="emerald"
-                      />
-                    ))}
-                  </ul>
-                </section>
-
-                <section>
-                  <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-gray-500">
-                    Your equipment (this browser)
-                  </h3>
-                  <button
-                    type="button"
-                    onClick={openAdd}
-                    className="mb-3 flex w-full items-center justify-center gap-2 rounded-lg border-2 border-dashed border-blue-300 bg-blue-50/50 py-3 text-sm font-medium text-blue-800 hover:bg-blue-50"
+              <div className="space-y-3">
+                {serverCatalogLoading && (
+                  <p className="text-sm text-slate-400">Loading…</p>
+                )}
+                {serverCatalogError && (
+                  <p className="mb-2 rounded-lg border border-amber-800/60 bg-amber-950/40 px-3 py-2 text-sm text-amber-100">
+                    {serverCatalogError}
+                  </p>
+                )}
+                {!serverCatalogLoading && !serverCatalogError && serverCatalog.length === 0 && (
+                  <p className="text-sm text-slate-400">
+                    No catalog entries yet. Sync the equipment list from the admin tools or your sheet workflow, then
+                    open this dialog again.
+                  </p>
+                )}
+                {!serverCatalogLoading && unifiedEquipment.length > 0 && filteredUnified.length === 0 && (
+                  <p className="text-sm text-slate-400">No rows match your search.</p>
+                )}
+                {!serverCatalogLoading && unifiedEquipment.length === 0 && (
+                  <p className="text-sm text-slate-400">
+                    No equipment loaded yet. Add a device above or sync the catalog.
+                  </p>
+                )}
+                {filteredUnified.length > 0 && (
+                  <ul
+                    className="relative w-full list-none p-0"
+                    style={{ height: `${equipmentVirtualizer.getTotalSize()}px` }}
                   >
-                    <Plus className="size-4" />
-                    Add device to your equipment
-                  </button>
-
-                  {filteredCustom.length === 0 && (
-                    <p className="py-4 text-center text-sm text-gray-500">
-                      {search.trim()
-                        ? 'No saved equipment matches your search.'
-                        : 'No extra devices saved in this browser yet.'}
-                    </p>
-                  )}
-
-                  {filteredCustom.map((d) => (
-                    <div key={d.id} className="mb-3">
-                      <DeviceDbRow
-                        device={d}
-                        expanded={expandedIds.has(d.id)}
-                        onToggle={() => toggleExpand(d.id)}
-                        onEdit={() => openEdit(d)}
-                        onDelete={() => handleDelete(d)}
-                        variantLabel="Fox equipment"
-                        badgeTone="amber"
-                      />
-                    </div>
-                  ))}
-                </section>
+                    {equipmentVirtualizer.getVirtualItems().map((virtualRow) => {
+                      const { key, device, source } = filteredUnified[virtualRow.index]!;
+                      return (
+                        <li
+                          key={virtualRow.key}
+                          data-index={virtualRow.index}
+                          ref={equipmentVirtualizer.measureElement}
+                          className="absolute left-0 top-0 w-full list-none"
+                          style={{
+                            transform: `translateY(${virtualRow.start}px)`,
+                          }}
+                        >
+                          <DeviceDbRow
+                            rowKey={key}
+                            device={device}
+                            expanded={expandedIds.has(key)}
+                            onToggle={() => toggleExpand(key)}
+                            onEdit={
+                              source === 'local'
+                                ? () => openEdit(device)
+                                : () => openEditCatalogRow(device)
+                            }
+                            onDelete={() => void handleDeleteEquipment(device, source)}
+                          />
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
               </div>
             )}
 
             {tab === 'employees' && (
-              <div className="space-y-6">
-                {directoryLoading && (
-                  <p className="text-sm text-gray-500">Loading Fox directory from server…</p>
-                )}
+              <div className="space-y-4">
+                {directoryLoading && <p className="text-sm text-slate-400">Loading…</p>}
                 {directoryError && (
-                  <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                  <p className="rounded-lg border border-amber-800/60 bg-amber-950/40 px-3 py-2 text-sm text-amber-100">
                     {directoryError}
                   </p>
                 )}
 
-                <section>
-                  <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-gray-500">
-                    Fox directory 
-                  </h3>
-                  {!directoryLoading && filteredDirectory.length === 0 && (
-                    <p className="text-sm text-gray-500">
-                      {employeeSearch.trim() ? 'No directory names match your search.' : 'No names returned from server.'}
-                    </p>
-                  )}
-                  <ul className="space-y-1">
-                    {filteredDirectory.map((name) => (
-                      <li
-                        key={`dir:${name}`}
-                        className="flex items-center justify-between gap-2 rounded-lg border border-gray-100 bg-gray-50/80 px-3 py-2 text-sm"
-                      >
-                        <span className="min-w-0 truncate font-medium text-gray-900">{name}</span>
-                        <span className="shrink-0 rounded bg-white px-2 py-0.5 text-[10px] font-semibold uppercase text-gray-600 ring-1 ring-gray-200">
-                          Server
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                </section>
-
-                <section>
-                  <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-gray-500">
-                    Added on this server
-                  </h3>
-                  {!directoryLoading && filteredExtras.length === 0 && (
-                    <p className="text-sm text-gray-500">
-                      {employeeSearch.trim()
-                        ? 'No added names match your search.'
-                        : 'No extra names yet. Use the form above to add someone.'}
-                    </p>
-                  )}
-                  <ul className="space-y-1">
-                    {filteredExtras.map((name) => (
-                      <li
-                        key={`extra:${name}`}
-                        className="flex items-center justify-between gap-2 rounded-lg border border-amber-100 bg-amber-50/50 px-3 py-2 text-sm"
-                      >
-                        <span className="min-w-0 truncate font-medium text-gray-900">{name}</span>
-                        <div className="flex shrink-0 items-center gap-2">
-                          <span className="rounded bg-white px-2 py-0.5 text-[10px] font-semibold uppercase text-amber-900 ring-1 ring-amber-200">
-                            Shared
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => void handleRemoveExtra(name)}
-                            className="rounded p-1.5 text-red-600 hover:bg-red-50"
-                            title="Remove from this server"
-                            aria-label={`Remove ${name}`}
-                          >
-                            <Trash2 className="size-4" />
-                          </button>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                </section>
+                {!directoryLoading && filteredEmployeeRows.length === 0 && (
+                  <p className="text-sm text-slate-400">
+                    {employeeSearch.trim()
+                      ? 'No names match your search.'
+                      : 'No names yet. Use the form above to add someone.'}
+                  </p>
+                )}
+                <ul className="space-y-1">
+                  {filteredEmployeeRows.map(({ name, canRemove }) => (
+                    <li
+                      key={name}
+                      className="flex items-center justify-between gap-2 rounded-lg border border-slate-600/70 bg-slate-800/50 px-3 py-2 text-sm"
+                    >
+                      <span className="min-w-0 truncate font-medium text-slate-100">{name}</span>
+                      {canRemove ? (
+                        <button
+                          type="button"
+                          onClick={() => void handleRemoveExtra(name)}
+                          className="shrink-0 rounded p-1.5 text-red-400 transition-colors hover:bg-red-950/50"
+                          title="Remove name"
+                          aria-label={`Remove ${name}`}
+                        >
+                          <Trash2 className="size-4" />
+                        </button>
+                      ) : (
+                        <span className="w-8 shrink-0" aria-hidden />
+                      )}
+                    </li>
+                  ))}
+                </ul>
               </div>
             )}
           </div>
@@ -547,97 +633,167 @@ export function DeviceDatabaseModal({ isOpen, onClose }: DeviceDatabaseModalProp
         onSaveDevice={handleSaveDevice}
         existingDeviceNames={existingNamesForForm}
         editingDevice={editingDevice}
-        cloneSource={cloneSource}
+        catalogPrefill={catalogPrefill}
+        surface="dark"
       />
     </>
   );
 }
 
 function DeviceDbRow({
+  rowKey,
   device,
   expanded,
   onToggle,
   onEdit,
   onDelete,
-  variantLabel = 'Fox equipment',
-  badgeTone = 'amber',
 }: {
+  rowKey: string;
   device: Device;
   expanded: boolean;
   onToggle: () => void;
   onEdit?: () => void;
   onDelete?: () => void;
-  variantLabel?: string;
-  badgeTone?: 'amber' | 'emerald';
 }) {
-  const badgeClass =
-    badgeTone === 'emerald'
-      ? 'bg-emerald-100 text-emerald-900'
-      : 'bg-amber-100 text-amber-800';
   return (
-    <div className="rounded-lg border border-gray-200 bg-white shadow-sm">
-      <div className="flex items-center gap-2 p-3">
-        <button
-          type="button"
-          onClick={onToggle}
-          className="rounded p-1 text-gray-500 hover:bg-gray-100"
-          aria-expanded={expanded}
-        >
-          {expanded ? <ChevronDown className="size-5" /> : <ChevronRight className="size-5" />}
-        </button>
-        <div className="min-w-0 flex-1">
-          <div className="truncate font-medium text-gray-900">{getDeviceDisplayName(device)}</div>
-          <div className="text-xs text-gray-500">
-            {device.heightInU != null ? `${device.heightInU}U` : '1U'} ·{' '}
-            {device.deviceWidthInches != null ? `${device.deviceWidthInches}"` : '19"'} · {device.category} ·{' '}
-            {device.ports.length} port{device.ports.length !== 1 ? 's' : ''}
-            <span className={`ml-2 rounded px-1.5 py-0.5 text-[10px] font-medium uppercase ${badgeClass}`}>
-              {variantLabel}
-            </span>
+    <div className="list-none">
+      <div className="rounded-lg border border-slate-600/70 bg-slate-800/60 shadow-sm">
+        <div className="flex items-center gap-2 p-3">
+          <button
+            type="button"
+            onClick={onToggle}
+            className="rounded p-1 text-slate-400 transition-colors hover:bg-slate-700 hover:text-slate-200"
+            aria-expanded={expanded}
+            aria-controls={`device-db-detail-${rowKey}`}
+          >
+            {expanded ? <ChevronDown className="size-5" /> : <ChevronRight className="size-5" />}
+          </button>
+          <div className="min-w-0 flex-1">
+            <button
+              type="button"
+              onClick={() => onEdit?.()}
+              className="w-full truncate text-left font-medium text-slate-100 hover:text-sky-200 hover:underline"
+            >
+              {getDeviceDisplayName(device)}
+            </button>
+            <div className="text-xs text-slate-400">
+              {device.heightInU != null ? `${device.heightInU}U` : '1U'} ·{' '}
+              {device.deviceWidthInches != null ? `${device.deviceWidthInches}"` : '19"'} · {device.category} ·{' '}
+              {device.ports.length} port{device.ports.length !== 1 ? 's' : ''}
+            </div>
+          </div>
+          <div className="flex shrink-0 gap-1">
+            {onEdit && (
+              <button
+                type="button"
+                onClick={onEdit}
+                className="rounded-lg p-2 text-slate-300 transition-colors hover:bg-slate-700"
+                title="Edit"
+              >
+                <Pencil className="size-4" />
+              </button>
+            )}
+            {onDelete && (
+              <button
+                type="button"
+                onClick={onDelete}
+                className="rounded-lg p-2 text-red-400 transition-colors hover:bg-red-950/50"
+                title="Remove"
+              >
+                <Trash2 className="size-4" />
+              </button>
+            )}
           </div>
         </div>
-        <div className="flex shrink-0 gap-1">
-          {onEdit && (
-            <button
-              type="button"
-              onClick={onEdit}
-              className="rounded-lg p-2 text-gray-600 hover:bg-gray-100"
-              title="Edit"
-            >
-              <Pencil className="size-4" />
-            </button>
-          )}
-          {onDelete && (
-            <button
-              type="button"
-              onClick={onDelete}
-              className="rounded-lg p-2 text-red-600 hover:bg-red-50"
-              title="Remove"
-            >
-              <Trash2 className="size-4" />
-            </button>
-          )}
-        </div>
+        {expanded && (
+          <div
+            id={`device-db-detail-${rowKey}`}
+            className="space-y-3 border-t border-slate-600/70 px-4 py-3 text-sm text-slate-300"
+          >
+            <dl className="grid grid-cols-1 gap-x-4 gap-y-1 text-xs sm:grid-cols-2">
+              <div className="sm:col-span-2">
+                <dt className="font-semibold uppercase text-slate-500">Device id</dt>
+                <dd className="font-mono text-slate-200">{device.id}</dd>
+              </div>
+              {(device.manufacturer?.trim() || device.model?.trim()) && (
+                <>
+                  <div>
+                    <dt className="font-semibold uppercase text-slate-500">Manufacturer</dt>
+                    <dd>{device.manufacturer?.trim() || '—'}</dd>
+                  </div>
+                  <div>
+                    <dt className="font-semibold uppercase text-slate-500">Model</dt>
+                    <dd>{device.model?.trim() || '—'}</dd>
+                  </div>
+                </>
+              )}
+              {device.name?.trim() && (
+                <div className="sm:col-span-2">
+                  <dt className="font-semibold uppercase text-slate-500">Legacy / display name</dt>
+                  <dd>{device.name}</dd>
+                </div>
+              )}
+              <div>
+                <dt className="font-semibold uppercase text-slate-500">Category</dt>
+                <dd>{device.category}</dd>
+              </div>
+              <div>
+                <dt className="font-semibold uppercase text-slate-500">Rack height (U)</dt>
+                <dd>{device.heightInU ?? '—'}</dd>
+              </div>
+              <div>
+                <dt className="font-semibold uppercase text-slate-500">Rack width (in)</dt>
+                <dd>{device.deviceWidthInches != null ? device.deviceWidthInches : '—'}</dd>
+              </div>
+              <div>
+                <dt className="font-semibold uppercase text-slate-500">Depth (in)</dt>
+                <dd>
+                  {device.deviceDepthInches != null && Number.isFinite(device.deviceDepthInches)
+                    ? device.deviceDepthInches
+                    : '—'}
+                </dd>
+              </div>
+              <div>
+                <dt className="font-semibold uppercase text-slate-500">Face height (in)</dt>
+                <dd>
+                  {device.physicalHeightInches != null && Number.isFinite(device.physicalHeightInches)
+                    ? device.physicalHeightInches
+                    : '—'}
+                </dd>
+              </div>
+              {device.sheetPower?.trim() && (
+                <div className="sm:col-span-2">
+                  <dt className="font-semibold uppercase text-slate-500">Power / PSU</dt>
+                  <dd>{device.sheetPower}</dd>
+                </div>
+              )}
+              {device.notes?.trim() && (
+                <div className="sm:col-span-2">
+                  <dt className="font-semibold uppercase text-slate-500">Notes</dt>
+                  <dd className="whitespace-pre-wrap">{device.notes}</dd>
+                </div>
+              )}
+            </dl>
+            <div>
+              <div className="mb-2 text-xs font-semibold uppercase text-slate-500">Ports</div>
+              {device.ports.length === 0 ? (
+                <p className="text-slate-500">No ports defined.</p>
+              ) : (
+                <ul className="space-y-1">
+                  {device.ports.map((p, i) => (
+                    <li key={i} className="flex flex-wrap gap-2 text-xs">
+                      <span className="font-medium text-slate-100">{p.type}</span>
+                      <span className="text-slate-500">({p.direction})</span>
+                      {p.label && <span className="text-slate-400">{p.label}</span>}
+                      {p.count != null && p.count > 1 && <span className="text-slate-500">×{p.count}</span>}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        )}
       </div>
-      {expanded && (
-        <div className="border-t border-gray-100 px-4 py-3 text-sm text-gray-700">
-          <div className="mb-2 text-xs font-semibold uppercase text-gray-500">Ports</div>
-          {device.ports.length === 0 ? (
-            <p className="text-gray-500">No ports defined.</p>
-          ) : (
-            <ul className="space-y-1">
-              {device.ports.map((p, i) => (
-                <li key={i} className="flex flex-wrap gap-2 text-xs">
-                  <span className="font-medium text-gray-900">{p.type}</span>
-                  <span className="text-gray-500">({p.direction})</span>
-                  {p.label && <span className="text-gray-600">{p.label}</span>}
-                  {p.count != null && p.count > 1 && <span className="text-gray-500">×{p.count}</span>}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
     </div>
   );
 }

@@ -3,8 +3,9 @@ import { useLocation, useNavigate, useSearchParams } from 'react-router';
 import { ArrowLeft, Database, Server } from 'lucide-react';
 import { RackPlanner } from '../components/RackPlanner';
 import { DeviceDatabaseModal } from '../components/DeviceDatabaseModal';
+import { AppHeaderBrand } from '../components/AppHeaderBrand';
 
-type RackLocationState = { openRackLibrary?: boolean; openRackId?: string } | null;
+type RackLocationState = { openRackId?: string } | null;
 
 export function RackWorkspacePage() {
   const navigate = useNavigate();
@@ -15,8 +16,6 @@ export function RackWorkspacePage() {
   const openRackIdFromState = locState?.openRackId;
   const openRackId = rackFromQuery ?? openRackIdFromState;
   const forceNewRack = searchParams.get('new') === '1' || searchParams.get('new') === 'true';
-  const openRackLibrary =
-    Boolean(locState?.openRackLibrary) && !openRackId && !rackFromQuery && !forceNewRack;
   const [deviceDatabaseOpen, setDeviceDatabaseOpen] = useState(false);
 
   return (
@@ -59,24 +58,16 @@ export function RackWorkspacePage() {
                     <Server className="size-7 text-white" />
                   </div>
                 </div>
-                <div>
-                  <div className="flex flex-wrap items-baseline gap-2">
-                    <span className="text-3xl font-black tracking-tight text-white">RACK+</span>
-                    <span className="rounded bg-white px-2 py-0.5 text-xs font-black tracking-wider text-[#CC0000]">
-                      PRO
-                    </span>
-                  </div>
-                  <p className="text-sm font-semibold tracking-wide text-blue-100">FOX BROADCAST ENGINEERING</p>
-                </div>
+                <AppHeaderBrand mode="build" />
               </button>
             </div>
             <button
               type="button"
               onClick={() => setDeviceDatabaseOpen(true)}
-              className="no-print flex shrink-0 items-center gap-2 rounded-lg border border-white/30 bg-white/10 px-4 py-2 text-sm font-medium text-white backdrop-blur-sm transition-colors hover:bg-white/20"
+              className="no-print flex shrink-0 items-center gap-2.5 rounded-lg border border-white/30 bg-white/10 px-5 py-3 text-base font-semibold text-white backdrop-blur-sm transition-colors hover:bg-white/20"
             >
-              <Database className="size-4" />
-              Device database
+              <Database className="size-5 shrink-0" />
+              Edit database
             </button>
           </div>
         </div>
@@ -85,7 +76,6 @@ export function RackWorkspacePage() {
       <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
         <RackPlanner
           key={openRackId ? `rack-open:${openRackId}` : forceNewRack ? `rack-new:${location.key}` : location.key}
-          initialOpenRackLibrary={openRackLibrary}
           initialRackIdToLoad={openRackId}
           forceNewRack={forceNewRack}
         />

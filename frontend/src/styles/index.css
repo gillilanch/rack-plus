@@ -1,6 +1,17 @@
 @import './tailwind.css';
 @import './theme.css';
 
+html {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background-color: rgb(15 23 42); /* slate-900 */
+  color: rgb(241 245 249); /* slate-100 */
+}
+
 /* Cable Identification System typography — display caps + readable UI body */
 @layer utilities {
   .font-cable-display {
@@ -12,23 +23,184 @@
   }
 }
 
+/*
+ * Rack “Export PNG” snapshot: white background, black lines & typography.
+ * Class is toggled on the capture root (see RackPlanner) only while html-to-image runs.
+ */
+.rack-export-png-light {
+  background-color: #ffffff !important;
+  box-shadow: none !important;
+  border-color: #000000 !important;
+}
+
+.rack-export-png-light,
+.rack-export-png-light * {
+  --tw-ring-shadow: 0 0 #0000 !important;
+  --tw-ring-offset-shadow: 0 0 #0000 !important;
+  /* One monospace stack for every label in the export */
+  font-family:
+    ui-monospace, 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'Liberation Mono', 'Courier New', monospace !important;
+}
+
+/* Unit rows: light grid only (not device blocks) */
+.rack-export-png-light [class*='bg-gradient'],
+.rack-export-png-light [class*='from-slate'],
+.rack-export-png-light [class*='via-slate'],
+.rack-export-png-light [class*='to-slate'] {
+  background: #f8fafc !important;
+  background-image: none !important;
+}
+
+.rack-export-png-light [class*='bg-slate-950'],
+.rack-export-png-light [class*='bg-slate-900'],
+.rack-export-png-light [class*='bg-slate-800'] {
+  background-color: #ffffff !important;
+}
+
+/*
+ * Device face + cable edge strips both use data-rack-device-id.
+ * Solid white fill so the rack’s tinted bg (slate/cyan) doesn’t show through as “blue”.
+ * Kill hover/drag cyan borders from classnames — export uses black only.
+ */
+.rack-export-png-light [data-rack-device-id] {
+  background-color: #ffffff !important;
+  background-image: none !important;
+  box-shadow: none !important;
+  --tw-ring-width: 0px !important;
+  --tw-ring-offset-width: 0px !important;
+  --tw-ring-color: #000000 !important;
+  border-color: #000000 !important;
+  border-top-color: #000000 !important;
+  border-right-color: #000000 !important;
+  border-bottom-color: #000000 !important;
+  border-left-color: #000000 !important;
+  color: #000000 !important;
+  opacity: 1 !important;
+}
+
+.rack-export-png-light [data-rack-device-id] * {
+  color: #000000 !important;
+  background-color: #ffffff !important;
+  background-image: none !important;
+  border-color: #000000 !important;
+  --tw-ring-color: #000000 !important;
+}
+
+.rack-export-png-light [class*='backdrop-blur'] {
+  backdrop-filter: none !important;
+}
+
+.rack-export-png-light [class*='text-slate'],
+.rack-export-png-light [class*='text-cyan'],
+.rack-export-png-light [class*='text-red-'],
+.rack-export-png-light [class*='text-sky-'],
+.rack-export-png-light [class*='text-blue-'] {
+  color: #000000 !important;
+}
+
+.rack-export-png-light [class*='border-slate'],
+.rack-export-png-light [class*='border-cyan'],
+.rack-export-png-light [class*='border-sky-'],
+.rack-export-png-light [class*='ring-'] {
+  border-color: #000000 !important;
+  --tw-ring-color: #000000 !important;
+}
+
+.rack-export-png-light [class*='ring-cyan'],
+.rack-export-png-light [class*='ring-sky-'] {
+  --tw-ring-color: #000000 !important;
+}
+
+/* Cable drag hit strips — hide in export (interaction-only) */
+.rack-export-png-light [title^='Drag cable'] {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+/* SVG: cable paths & connection graphics — all black strokes */
+.rack-export-png-light svg path {
+  filter: none !important;
+}
+
+/* Any stroked path (cables, drag preview, etc.) — force black; skips wide hit targets */
+.rack-export-png-light svg path[stroke]:not([stroke='transparent']) {
+  stroke: #000000 !important;
+}
+
+.rack-export-png-light svg path[stroke='transparent'] {
+  opacity: 0 !important;
+}
+
+/* Port dots + cable endpoint circles — white fill, black stroke (no cyan / slate fill) */
+.rack-export-png-light svg circle {
+  fill: #ffffff !important;
+  stroke: #000000 !important;
+}
+
+/*
+ * Cable labels use light fills + dark halos in the app; export = black text only.
+ * Presentation attributes must be beaten with !important for html-to-image.
+ */
+.rack-export-png-light svg text,
+.rack-export-png-light svg tspan {
+  fill: #000000 !important;
+  stroke: none !important;
+  stroke-width: 0 !important;
+  paint-order: normal !important;
+}
+
+/* Per-U horizontal rules — solid black in PNG/print snapshot */
+.rack-export-png-light .rack-unit-row {
+  border-bottom-color: #000000 !important;
+  border-bottom-width: 1px !important;
+}
+
 @media print {
+  @page {
+    size: auto;
+    margin: 8mm;
+  }
+
+  html {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
   .no-print {
     display: none !important;
   }
   .rack-planner-print-area {
     max-width: 100% !important;
+    width: 100% !important;
+    padding: 0 !important;
+    margin: 0 !important;
   }
   .rack-workspace-root {
-    background: #0f172a !important;
+    background: #ffffff !important;
   }
   .rack-workspace-root > .rack-workspace-grid-overlay {
     display: none !important;
   }
   .rack-diagram-stage {
-    background: #e2e8f0 !important;
-    border-color: #94a3b8 !important;
+    background: #ffffff !important;
+    border-color: transparent !important;
     box-shadow: none !important;
+    padding: 0 !important;
+    --tw-ring-width: 0px !important;
+    --tw-ring-offset-width: 0px !important;
+  }
+  /* Match PNG export: white stage around the rack when using export/print styling */
+  .rack-diagram-stage:has(.rack-export-png-light) {
+    background: #ffffff !important;
+    border-color: transparent !important;
+  }
+  .rack-preview-column {
+    border: none !important;
+    box-shadow: none !important;
+    background: #ffffff !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    max-width: none !important;
   }
 }
 

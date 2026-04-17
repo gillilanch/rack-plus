@@ -2,6 +2,7 @@ import {
   useCallback,
   useId,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type MutableRefObject,
@@ -9,7 +10,11 @@ import {
 } from 'react';
 import { useDrag, useDrop } from 'react-dnd';
 import type { RackConnection, RackDevice } from '../types/rack';
-import { getDeviceDisplayName } from '../utils/deviceDisplay';
+import {
+  getDeviceDisplayName,
+  getDeviceIdentityTwoLines,
+  inferManufacturerModelFromLegacyName,
+} from '../utils/deviceDisplay';
 import { RackCableOverlay } from './RackCableOverlay';
 import { Trash2, Edit, GripVertical } from 'lucide-react';
 import { DEFAULT_INCHES_PER_RU, DEFAULT_RACK_WIDTH_INCHES, rackFaceWidthPx } from '../utils/rackUnits';
@@ -18,6 +23,11 @@ import {
   horizontalOffsetInchesFromDropX,
   normalizeDeviceHorizontalFields,
 } from '../utils/rackDevicePlacement';
+import {
+  NARROW_DEVICE_FACE_INCHES,
+  NARROW_DEVICE_NAME_COL_PX,
+  shouldShowManufacturerOnDeviceSide,
+} from '../utils/rackDeviceFaceLabels';
 import type { BuildManualConnectionVisualRoute } from '../utils/rackConnectionHelpers';
 
 export type RackPortMismatchPayload = {
@@ -68,9 +78,11 @@ function RackUnit({
   return (
     <div
       style={{ height: `${unitHeightPx}px` }}
-      className="relative flex min-h-0 items-center border-b border-slate-600/40 bg-gradient-to-r from-slate-700/75 via-slate-700/55 to-slate-600/50 px-1 sm:px-2"
+      className="rack-unit-row relative flex min-h-0 items-center border-b border-slate-700/60 bg-gradient-to-r from-slate-900/90 via-slate-800/85 to-slate-900/80 px-1 sm:px-2"
     >
-      <span className="text-[10px] font-mono text-slate-400 sm:text-xs">{totalHeight - position}U</span>
+      <span className="text-[11px] font-mono font-semibold tabular-nums text-slate-300 sm:text-xs">
+        {totalHeight - position}U
+      </span>
     </div>
   );
 }
@@ -97,6 +109,28 @@ interface DraggableDeviceProps {
   onRemove: (deviceId: string) => void;
 }
 
+/** Match `text-sm` / `sm:text-base` — if full name fits at this size, use one line. */
+function measureDisplayNameFitsOneLine(col: HTMLDivElement, text: string): boolean {
+  const w = col.clientWidth;
+  if (w <= 4) return false;
+  const px =
+    typeof window !== 'undefined' && window.matchMedia('(min-width: 640px)').matches ? 16 : 14;
+  const probe = document.createElement('div');
+  probe.style.boxSizing = 'border-box';
+  probe.style.width = `${w}px`;
+  probe.style.whiteSpace = 'nowrap';
+  probe.style.overflow = 'hidden';
+  probe.style.fontSize = `${px}px`;
+  probe.style.fontWeight = '600';
+  probe.style.letterSpacing = '-0.025em';
+  probe.style.fontFamily = getComputedStyle(col).fontFamily;
+  probe.textContent = text;
+  col.appendChild(probe);
+  const fits = probe.scrollWidth <= w;
+  col.removeChild(probe);
+  return fits;
+}
+
 function DraggableDevice({
   device,
   unitHeightPx,
@@ -106,30 +140,110 @@ function DraggableDevice({
 }: DraggableDeviceProps & { rackWidthInches: number }) {
   const rw = rackWidthInches > 0 ? rackWidthInches : DEFAULT_RACK_WIDTH_INCHES;
   const placed = normalizeDeviceHorizontalFields(device, rw);
-  const widthPct = (getDeviceWidthInches(placed) / rw) * 100;
+  const deviceWidthInches = getDeviceWidthInches(placed);
+  const widthPct = (deviceWidthInches / rw) * 100;
   const leftPct = ((placed.horizontalOffsetInches ?? 0) / rw) * 100;
+  const displayName = getDeviceDisplayName(device);
+  const compactByFaceWidth = deviceWidthInches < NARROW_DEVICE_FACE_INCHES;
+  const identityTwo = useMemo(
+    () => getDeviceIdentityTwoLines(device),
+    [device.name, device.manufacturer, device.model],
+  );
+
+  /** Narrow devices: show manufacturer only — best-effort from fields or legacy name. */
+  const manufacturerLabelOnly = useMemo(() => {
+    const fromField = (device.manufacturer ?? '').trim();
+    if (fromField) return fromField;
+    if (identityTwo?.manufacturer) return identityTwo.manufacturer;
+    const inf = inferManufacturerModelFromLegacyName(device.name);
+    if (inf.manufacturer) return inf.manufacturer;
+    const dn = displayName.trim();
+    const sp = dn.indexOf(' ');
+    if (sp > 0) return dn.slice(0, sp);
+    return dn;
+  }, [device.manufacturer, device.name, identityTwo, displayName]);
+
+  const heightPx = device.heightInU * unitHeightPx;
+  const nameColumnRef = useRef<HTMLDivElement>(null);
+  const deviceBoxRef = useRef<HTMLDivElement | null>(null);
+  const [faceWidthPx, setFaceWidthPx] = useState(0);
+  const [identityFitsOneLine, setIdentityFitsOneLine] = useState(true);
+  const [nameColNarrow, setNameColNarrow] = useState(false);
+
+  const remeasureIdentityLayout = useCallback(() => {
+    const col = nameColumnRef.current;
+    if (!col || col.clientWidth <= 4) return;
+    const w = col.clientWidth;
+    const narrow = w < NARROW_DEVICE_NAME_COL_PX;
+    setNameColNarrow(narrow);
+    if (!identityTwo) {
+      setIdentityFitsOneLine(true);
+      return;
+    }
+    if (narrow || compactByFaceWidth) {
+      setIdentityFitsOneLine(false);
+      return;
+    }
+    setIdentityFitsOneLine(measureDisplayNameFitsOneLine(col, displayName));
+  }, [identityTwo, displayName, compactByFaceWidth]);
+
+  useLayoutEffect(() => {
+    remeasureIdentityLayout();
+  }, [remeasureIdentityLayout]);
+
+  useLayoutEffect(() => {
+    const col = nameColumnRef.current;
+    if (!col || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => remeasureIdentityLayout());
+    ro.observe(col);
+    return () => ro.disconnect();
+  }, [remeasureIdentityLayout]);
+
+  const useCompactLabel = nameColNarrow || compactByFaceWidth;
+  const showSideManufacturer =
+    faceWidthPx > 0 && shouldShowManufacturerOnDeviceSide(device, faceWidthPx, rw);
 
   const [{ isDragging }, drag] = useDrag(() => ({
     type: 'device',
-    item: { id: device.id, heightInU: device.heightInU, deviceWidthInches: getDeviceWidthInches(placed) },
+    item: { id: device.id, heightInU: device.heightInU, deviceWidthInches: deviceWidthInches },
     collect: (monitor) => ({
       isDragging: monitor.isDragging(),
     }),
   }));
 
-  const heightPx = device.heightInU * unitHeightPx;
+  const setDeviceBoxRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      deviceBoxRef.current = node;
+      drag(node);
+    },
+    [drag],
+  );
+
+  useLayoutEffect(() => {
+    const el = deviceBoxRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => setFaceWidthPx(el.clientWidth));
+    ro.observe(el);
+    setFaceWidthPx(el.clientWidth);
+    return () => ro.disconnect();
+  }, [device.id, widthPct, leftPct, heightPx]);
 
   return (
     <div
-      ref={drag}
+      ref={setDeviceBoxRef}
       data-rack-device-id={device.id}
       style={{ height: `${heightPx}px`, left: `${leftPct}%`, width: `${widthPct}%` }}
-      className={`pointer-events-auto absolute z-[6] cursor-grab rounded border-2 border-slate-500/80 bg-slate-500/85 pl-3 shadow-md shadow-black/25 backdrop-blur-[2px] transition-all active:cursor-grabbing group ${
-        isDragging ? 'border-sky-400 opacity-50' : 'hover:border-sky-500/70'
+      className={`pointer-events-auto absolute z-[6] cursor-grab rounded-lg border-2 border-slate-600/90 bg-slate-950/92 pl-3 shadow-lg shadow-black/50 ring-1 ring-slate-700/80 backdrop-blur-sm transition-all active:cursor-grabbing group ${
+        isDragging ? 'border-cyan-400/90 opacity-60 ring-cyan-500/30' : 'hover:border-cyan-500/60'
       }`}
     >
-      <div className="flex h-full min-w-0 items-center gap-1 px-1 py-1 sm:gap-2 sm:px-2 sm:py-2">
-        <GripVertical className="size-4 shrink-0 text-slate-300 sm:size-5" aria-hidden />
+      <div
+        className={`flex h-full min-w-0 items-center gap-0.5 px-1 py-1 sm:gap-2 ${useCompactLabel ? 'sm:px-1.5' : 'sm:px-2 sm:py-2'}`}
+      >
+        <GripVertical
+          className={`shrink-0 text-slate-300 ${useCompactLabel ? 'size-3.5' : 'size-4 sm:size-5'}`}
+          aria-hidden
+        />
         <div className="flex shrink-0 flex-col gap-0.5 sm:flex-row sm:gap-0.5">
           <button
             type="button"
@@ -138,7 +252,7 @@ function DraggableDevice({
               e.stopPropagation();
               onEdit(device);
             }}
-            className="rounded p-0.5 text-sky-300 opacity-0 hover:bg-slate-600/80 group-hover:opacity-100 sm:p-1"
+            className="rounded p-0.5 text-cyan-300 opacity-0 hover:bg-slate-700/90 group-hover:opacity-100 sm:p-1"
             title="Edit device"
           >
             <Edit className="size-3.5 sm:size-4" />
@@ -150,17 +264,56 @@ function DraggableDevice({
               e.stopPropagation();
               onRemove(device.id);
             }}
-            className="rounded p-0.5 text-red-300 opacity-0 hover:bg-slate-600/80 group-hover:opacity-100 sm:p-1"
+            className="rounded p-0.5 text-red-400 opacity-0 hover:bg-slate-700/90 group-hover:opacity-100 sm:p-1"
             title="Remove device"
           >
             <Trash2 className="size-3.5 sm:size-4" />
           </button>
         </div>
-        <div className="min-w-0 flex-1 pr-2">
-          <div className="truncate text-xs font-medium text-slate-50 sm:text-sm">
-            {getDeviceDisplayName(device)}
-          </div>
-          <div className="truncate text-[10px] text-slate-300 sm:text-xs">
+        <div
+          ref={nameColumnRef}
+          className="min-w-0 flex-1 pr-1 sm:pr-2"
+          title={displayName}
+        >
+          {useCompactLabel ? (
+            showSideManufacturer && identityTwo ? (
+              <p
+                className="break-words text-xs font-semibold leading-snug tracking-tight text-slate-50 sm:text-sm"
+                style={{ maxHeight: Math.max(0, heightPx - 28), overflow: 'hidden' }}
+              >
+                {identityTwo.model.trim() || '—'}
+              </p>
+            ) : showSideManufacturer ? (
+              <div className="truncate text-xs font-semibold tracking-tight text-slate-50 sm:text-sm">
+                {displayName}
+              </div>
+            ) : (
+              <p
+                className="break-words text-xs font-semibold leading-snug tracking-tight text-slate-50 sm:text-sm"
+                style={{ maxHeight: Math.max(0, heightPx - 28), overflow: 'hidden' }}
+              >
+                {manufacturerLabelOnly}
+              </p>
+            )
+          ) : identityTwo && identityFitsOneLine ? (
+            <div className="truncate text-sm font-semibold tracking-tight text-slate-50 sm:text-base">
+              {displayName}
+            </div>
+          ) : identityTwo ? (
+            <div className="flex min-h-0 flex-col gap-1 leading-snug">
+              <div className="truncate text-sm font-semibold tracking-tight text-slate-50 sm:text-base">
+                {identityTwo.manufacturer}
+              </div>
+              <div className="truncate text-xs font-medium text-slate-200 sm:text-sm">
+                {identityTwo.model}
+              </div>
+            </div>
+          ) : (
+            <div className="truncate text-sm font-semibold tracking-tight text-slate-50 sm:text-base">
+              {displayName}
+            </div>
+          )}
+          <div className="truncate text-[11px] font-medium text-slate-300 sm:text-xs">
             {device.heightInU}U • {getDeviceWidthInches(placed)}&quot; • {device.category}
           </div>
         </div>
@@ -263,7 +416,7 @@ function DroppableRack({
     <div
       ref={setDropAndCaptureRef}
       id={rackContainerId}
-      className={`relative max-w-full overflow-hidden rounded-lg border-2 border-slate-500/50 bg-transparent shadow-[0_4px_24px_rgba(0,0,0,0.25)] ${
+      className={`relative max-w-full overflow-hidden rounded-lg border-2 border-slate-600/70 bg-slate-950/30 shadow-[0_8px_32px_rgba(0,0,0,0.45)] ${
         stretchWidth ? 'w-full min-w-0' : ''
       }`}
       style={

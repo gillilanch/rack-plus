@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { findAllConnectablePairs, type ConnectablePair } from '../utils/cableFinder';
+import {
+  findAllConnectableOutputToOutputPairs,
+  findAllConnectablePairs,
+  type ConnectablePair,
+} from '../utils/cableFinder';
 import {
   connectionFromManualPorts,
   connectionFromSuggestedPair,
@@ -8,15 +12,19 @@ import {
   type BuildManualConnectionVisualRoute,
 } from '../utils/rackConnectionHelpers';
 import {
-  cableRunInchesBetweenAnchors,
-  cableRunInchesFromPixelAnchors,
+  cableRunInchesOrthogonalAnchors,
   dragCableRunDisplayInches,
   formatCableLengthInches,
   roundCableLengthInches,
 } from '../utils/rackCableMetrics';
 import type { RackConnection, RackDevice } from '../types/rack';
-import { deviceFaceHorizontalSpanPx } from '../utils/rackDevicePlacement';
+import { deviceFaceHorizontalSpanPx, normalizeDeviceHorizontalFields } from '../utils/rackDevicePlacement';
+import {
+  getDeviceManufacturerSideLabel,
+  shouldShowManufacturerOnDeviceSide,
+} from '../utils/rackDeviceFaceLabels';
 import { DEFAULT_RACK_WIDTH_INCHES } from '../utils/rackUnits';
+import { getDeviceDisplayName } from '../utils/deviceDisplay';
 
 type DeviceEdge = 'left' | 'right';
 
@@ -40,6 +48,48 @@ function deviceRowBounds(device: RackDevice, totalHeight: number, unitHeightPx: 
   return { top, height: h };
 }
 
+/**
+ * Horizontal cable segment [xMin,xMax] at Y must not cross device front panels (name area),
+ * so pick a Y near the desired level that lies outside every overlapping device row.
+ */
+function findSafeHorizontalCableY(
+  desiredY: number,
+  xMin: number,
+  xMax: number,
+  placedDevices: RackDevice[],
+  totalHeight: number,
+  unitHeightPx: number,
+  rackWidthPx: number,
+  rackWidthInches: number,
+  rackHeightPx: number,
+): number {
+  const hitsFace = (y: number): boolean => {
+    for (const d of placedDevices) {
+      if (d.rackPosition === undefined) continue;
+      const placed = normalizeDeviceHorizontalFields(d, rackWidthInches);
+      const { leftPx, widthPx } = deviceFaceHorizontalSpanPx(placed, rackWidthPx, rackWidthInches);
+      const faceL = leftPx;
+      const faceR = leftPx + widthPx;
+      if (xMax <= faceL || xMin >= faceR) continue;
+      const { top, height } = deviceRowBounds(d, totalHeight, unitHeightPx);
+      if (y >= top && y <= top + height) return true;
+    }
+    return false;
+  };
+
+  if (!hitsFace(desiredY)) return desiredY;
+
+  const step = Math.max(2, unitHeightPx * 0.08);
+  const maxSteps = Math.ceil(rackHeightPx / step) + 8;
+  for (let i = 1; i <= maxSteps; i++) {
+    const up = desiredY - i * step;
+    if (up >= 0 && !hitsFace(up)) return up;
+    const down = desiredY + i * step;
+    if (down <= rackHeightPx && !hitsFace(down)) return down;
+  }
+  return desiredY;
+}
+
 /** Inset of cable anchor from rack left/right (matches SVG connection points). */
 const DEVICE_EDGE_PAD_PX = 10;
 /** Hit width along left/right of each device row (left strip sits in device pl-3 gutter). */
@@ -49,24 +99,25 @@ function dropRowPadPx(unitHeightPx: number): number {
   return Math.max(28, unitHeightPx * 0.45);
 }
 
-/** Always a straight segment — matches the in-rack drag preview. */
-function cableSvgPath(x1: number, y1: number, x2: number, y2: number): string {
-  return `M ${x1} ${y1} L ${x2} ${y2}`;
-}
-
-/** Offset both ends along the normal so bundled cables fan out without changing length much. */
-function bundleSpreadOffset(
+/**
+ * Vertical-first L: straight from (x1,y1) to the destination row (y2 + spreadY), then across to (x2,y2).
+ * Stays in one column until the destination row — no long detour through mid-rack.
+ */
+function verticalFirstCablePath(
   x1: number,
   y1: number,
   x2: number,
   y2: number,
-  spread: number,
-): { ox: number; oy: number } {
-  const dx = x2 - x1;
-  const dy = y2 - y1;
-  const len = Math.hypot(dx, dy);
-  if (len < 1e-3) return { ox: 0, oy: spread };
-  return { ox: (-dy / len) * spread, oy: (dx / len) * spread };
+  spreadY: number,
+): string {
+  const yH = y2 + spreadY;
+  if (Math.abs(x1 - x2) < 0.5) {
+    return `M ${x1} ${y1} L ${x1} ${y2}`;
+  }
+  if (Math.abs(spreadY) < 1e-6) {
+    return `M ${x1} ${y1} L ${x1} ${y2} L ${x2} ${y2}`;
+  }
+  return `M ${x1} ${y1} L ${x1} ${yH} L ${x2} ${yH} L ${x2} ${y2}`;
 }
 
 function anchorXForDeviceEdge(
@@ -79,6 +130,20 @@ function anchorXForDeviceEdge(
   const w = Math.max(widthPx, DEVICE_EDGE_PAD_PX * 2 + 1);
   if (edge === 'right') return leftPx + w - DEVICE_EDGE_PAD_PX;
   return leftPx + DEVICE_EDGE_PAD_PX;
+}
+
+/** X center for vertical manufacturer text: in the rack margin beside the face (not on the device), like cable space. */
+function manufacturerSideLabelCenterX(leftPx: number, widthPx: number, rackWidthPx: number): number {
+  const faceR = leftPx + widthPx;
+  const gap = 12;
+  const minSideSpace = 26;
+  if (leftPx >= minSideSpace) {
+    return leftPx - gap;
+  }
+  if (faceR <= rackWidthPx - minSideSpace) {
+    return faceR + gap;
+  }
+  return Math.max(10, Math.min(rackWidthPx - 10, leftPx + 14));
 }
 
 function connectionAnchorPoints(
@@ -163,6 +228,20 @@ function inferToEdgeFromRackX(xRelRack: number, rackWidthPx: number): DeviceEdge
  * anchor the target on that same side so the cable stays straight (not forced across the rack).
  * Only when the tip clearly crosses to the other side (or drag is more horizontal) use X-based inference.
  */
+function portDirectionLabel(p: { direction: string }): string {
+  if (p.direction === 'output') return 'output';
+  if (p.direction === 'input') return 'input';
+  return 'I/O';
+}
+
+function formatSuggestionLabel(toDevice: RackDevice, pair: ConnectablePair): string {
+  const dev = getDeviceDisplayName(toDevice);
+  const fromD = portDirectionLabel(pair.fromPort);
+  const toD = portDirectionLabel(pair.toPort);
+  const cable = pair.solution.cable?.name ?? `${pair.fromPort.type} cable`;
+  return `${dev}: ${pair.fromPort.type} (${fromD}) → ${pair.toPort.type} (${toD}) · ${cable}`;
+}
+
 function inferToEdgeFromDrag(d: DragState, rackWidthPx: number): DeviceEdge {
   const dx = Math.abs(d.curX - d.startX);
   const dy = Math.abs(d.curY - d.startY);
@@ -186,10 +265,10 @@ function portSocketCircle(cx: number, cy: number, edge: DeviceEdge) {
       <circle
         cx={cx}
         cy={cy}
-        r={3.5}
-        fill="#f3f4f6"
-        stroke="#9ca3af"
-        strokeWidth={1}
+        r={4}
+        fill="#0f172a"
+        stroke="#94a3b8"
+        strokeWidth={1.5}
         style={{ pointerEvents: 'none' }}
       />
     );
@@ -198,10 +277,10 @@ function portSocketCircle(cx: number, cy: number, edge: DeviceEdge) {
     <circle
       cx={cx}
       cy={cy}
-      r={3.5}
-      fill="#eef2ff"
-      stroke="#6366f1"
-      strokeWidth={1}
+      r={4}
+      fill="#0f172a"
+      stroke="#38bdf8"
+      strokeWidth={1.5}
       style={{ pointerEvents: 'none' }}
     />
   );
@@ -346,20 +425,33 @@ export function RackCableOverlay({
   dragRef.current = drag;
   const byId = useMemo(() => new Map(placedDevices.map((d) => [d.id, d])), [placedDevices]);
 
-  /** Fan out multiple links between the same two devices so paths are easier to see and hit. */
+  /**
+   * Fan out cables that share the same rounded anchor geometry (same visual route) so overlaps read as
+   * separate connections — not only multiple links between one device pair.
+   */
   const cableBundleSpreadY = useMemo(() => {
     const groups = new Map<string, RackConnection[]>();
     for (const conn of connections) {
-      const k =
-        conn.fromDeviceId < conn.toDeviceId
-          ? `${conn.fromDeviceId}\0${conn.toDeviceId}`
-          : `${conn.toDeviceId}\0${conn.fromDeviceId}`;
+      const a = byId.get(conn.fromDeviceId);
+      const b = byId.get(conn.toDeviceId);
+      if (!a || !b || a.rackPosition === undefined || b.rackPosition === undefined) continue;
+      const { x1, y1, x2, y2 } = connectionAnchorPoints(
+        a,
+        b,
+        totalHeight,
+        unitHeightPx,
+        rackWidthPx,
+        rackWidthInches,
+        conn,
+      );
+      const r = (v: number) => Math.round(v / 4) * 4;
+      const k = `${r(x1)}|${r(y1)}|${r(x2)}|${r(y2)}`;
       const arr = groups.get(k);
       if (arr) arr.push(conn);
       else groups.set(k, [conn]);
     }
     const out = new Map<string, number>();
-    const stepPx = 5;
+    const stepPx = 10;
     for (const arr of groups.values()) {
       if (arr.length <= 1) continue;
       const sorted = [...arr].sort((a, b) => a.id.localeCompare(b.id));
@@ -368,7 +460,7 @@ export function RackCableOverlay({
       });
     }
     return out;
-  }, [connections]);
+  }, [connections, byId, totalHeight, unitHeightPx, rackWidthPx, rackWidthInches]);
 
   const rackMetrics = useCallback(() => {
     const el = rackAreaRef.current;
@@ -383,17 +475,19 @@ export function RackCableOverlay({
     const out: { to: RackDevice; pair: ConnectablePair; label: string }[] = [];
     for (const to of placedDevices) {
       if (to.id === from.id) continue;
-      const pairs = findAllConnectablePairs(from, to, 12);
+      const standardPairs = findAllConnectablePairs(from, to, 14);
+      const outputPairs = findAllConnectableOutputToOutputPairs(from, to, 8);
+      const pairs = [...standardPairs, ...outputPairs];
       for (const pair of pairs) {
         if (hasDirectedPortConnection(connections, from.id, to.id, pair.fromPort, pair.toPort)) continue;
         out.push({
           to,
           pair,
-          label: `${to.name}: ${pair.solution.cable?.name ?? pair.fromPort.type} (${pair.solution.type})`,
+          label: formatSuggestionLabel(to, pair),
         });
       }
     }
-    return out.slice(0, 12);
+    return out.slice(0, 14);
   }, [hoveredId, byId, placedDevices, connections]);
 
   const releaseCableDragCapture = useCallback((e: MouseEvent | PointerEvent | null) => {
@@ -434,11 +528,12 @@ export function RackCableOverlay({
       );
 
       const slackInches = slackAllowanceFeet * 12;
-      const dragGeomInches = cableRunInchesBetweenAnchors(
+      const dragGeomInches = cableRunInchesOrthogonalAnchors(
         d.startX,
         d.startY,
         d.curX,
         d.curY,
+        0,
         unitHeightPx,
         inchesPerRU,
         rackWidthPx,
@@ -559,11 +654,12 @@ export function RackCableOverlay({
               rackWidthInches,
               route,
             );
-            const anchorGeomInches = cableRunInchesBetweenAnchors(
+            const anchorGeomInches = cableRunInchesOrthogonalAnchors(
               base.x1,
               base.y1,
               base.x2,
               base.y2,
+              0,
               unitHeightPx,
               inchesPerRU,
               rackWidthPx,
@@ -645,7 +741,17 @@ export function RackCableOverlay({
 
   const handleSuggestionClick = (from: RackDevice, to: RackDevice, pair: ConnectablePair) => {
     if (hasDirectedPortConnection(connections, from.id, to.id, pair.fromPort, pair.toPort)) return;
-    onAddConnection(connectionFromSuggestedPair(from, to, pair, inchesPerRU, slackAllowanceFeet));
+    onAddConnection(
+      connectionFromSuggestedPair(
+        from,
+        to,
+        pair,
+        inchesPerRU,
+        slackAllowanceFeet,
+        rackWidthPx,
+        rackWidthInches,
+      ),
+    );
     setHoveredId(null);
   };
 
@@ -673,7 +779,7 @@ export function RackCableOverlay({
     const r = rackMetrics();
     if (!r) return false;
     const d = byId.get(deviceId);
-    if (!d?.rackPosition) return false;
+    if (d?.rackPosition === undefined) return false;
     const { top, height } = deviceRowBounds(d, totalHeight, unitHeightPx);
     const yRel = clientY - r.top;
     const yClamped = Math.min(Math.max(yRel, top + 2), top + height - 2);
@@ -705,57 +811,167 @@ export function RackCableOverlay({
         style={{ pointerEvents: 'none' }}
         aria-hidden
       >
-        {connections.map((c) => {
-          const a = byId.get(c.fromDeviceId);
-          const b = byId.get(c.toDeviceId);
-          if (!a?.rackPosition || !b?.rackPosition) return null;
-          const base = connectionAnchorPoints(a, b, totalHeight, unitHeightPx, rackWidthPx, rackWidthInches, c);
-          let { x1, y1, x2, y2 } = base;
-          const spread = cableBundleSpreadY.get(c.id) ?? 0;
-          if (spread !== 0) {
-            const { ox, oy } = bundleSpreadOffset(x1, y1, x2, y2, spread);
-            x1 += ox;
-            y1 += oy;
-            x2 += ox;
-            y2 += oy;
-          }
-          const dPath = cableSvgPath(x1, y1, x2, y2);
-          const stroke = c.cableStyle === 'manual' ? '#111827' : '#2563eb';
-          const min =
-            c.minCableLengthInches ??
-            cableRunInchesFromPixelAnchors(
-              base.x1,
-              base.y1,
-              base.x2,
-              base.y2,
-              unitHeightPx,
-              inchesPerRU,
-              slackAllowanceFeet,
-              c.extraSlackInches ?? 0,
-              rackWidthPx,
-              rackWidthInches,
-            );
-          const label = `>${formatCableLengthInches(min)}"`;
-          const fromEdge = c.routeFromEdge ?? 'right';
-          const toEdge = c.routeToEdge ?? 'left';
-          const midX = (x1 + x2) / 2;
-          const midY = (y1 + y2) / 2 - 4;
-          return (
-            <g key={c.id} style={{ pointerEvents: 'auto' }}>
-              <path d={dPath} fill="none" stroke={stroke} strokeWidth={c.cableStyle === 'manual' ? 1.5 : 2} opacity={0.92} style={{ pointerEvents: 'none' }} />
-              {portSocketCircle(x1, y1, fromEdge)}
-              {portSocketCircle(x2, y2, toEdge)}
-              <circle cx={x1} cy={y1} r={5.5} fill="#cbd5e1" stroke={stroke} strokeWidth={1.75} style={{ pointerEvents: 'none' }} />
-              <circle cx={x2} cy={y2} r={5.5} fill="#cbd5e1" stroke={stroke} strokeWidth={1.75} style={{ pointerEvents: 'none' }} />
+        <g className="rack-side-manufacturer-labels">
+          {placedDevices.map((d) => {
+            if (d.rackPosition === undefined) return null;
+            const placed = normalizeDeviceHorizontalFields(d, rackWidthInches);
+            const { leftPx, widthPx } = deviceFaceHorizontalSpanPx(placed, rackWidthPx, rackWidthInches);
+            if (!shouldShowManufacturerOnDeviceSide(d, widthPx, rackWidthInches)) return null;
+            const raw = getDeviceManufacturerSideLabel(d).trim();
+            if (!raw) return null;
+            const { top, height } = deviceRowBounds(d, totalHeight, unitHeightPx);
+            const fs = Math.min(11, Math.max(8, height / 16));
+            const maxChars = Math.max(4, Math.floor((height - 8) / (fs * 0.95)));
+            const label = raw.length > maxChars ? `${raw.slice(0, Math.max(0, maxChars - 1))}…` : raw;
+            const cx = manufacturerSideLabelCenterX(leftPx, widthPx, rackWidthPx);
+            const cy = top + height / 2;
+            return (
               <text
-                x={midX}
-                y={midY}
+                key={`mfr-edge-${d.id}`}
+                x={cx}
+                y={cy}
+                transform={`rotate(-90 ${cx} ${cy})`}
                 textAnchor="middle"
-                className="fill-gray-800 text-[9px] font-semibold"
-                style={{ fontSize: 9, pointerEvents: 'none' }}
+                dominantBaseline="central"
+                fill="#e2e8f0"
+                stroke="#020617"
+                strokeWidth={2}
+                style={{
+                  fontSize: fs,
+                  fontWeight: 600,
+                  fontFamily: 'ui-monospace, Menlo, Monaco, Consolas, monospace',
+                  paintOrder: 'stroke fill',
+                }}
               >
                 {label}
               </text>
+            );
+          })}
+        </g>
+        {connections.map((c) => {
+          const a = byId.get(c.fromDeviceId);
+          const b = byId.get(c.toDeviceId);
+          if (a?.rackPosition === undefined || b?.rackPosition === undefined) return null;
+          const base = connectionAnchorPoints(a, b, totalHeight, unitHeightPx, rackWidthPx, rackWidthInches, c);
+          const { x1, y1, x2, y2 } = base;
+          const bundleSpread = cableBundleSpreadY.get(c.id) ?? 0;
+          const desiredYH = y2 + bundleSpread;
+          const xSegMin = Math.min(x1, x2);
+          const xSegMax = Math.max(x1, x2);
+          const yHRaw = findSafeHorizontalCableY(
+            desiredYH,
+            xSegMin,
+            xSegMax,
+            placedDevices,
+            totalHeight,
+            unitHeightPx,
+            rackWidthPx,
+            rackWidthInches,
+            rackHeightPx,
+          );
+          const yH = Math.max(0, Math.min(rackHeightPx, yHRaw));
+          const spread = yH - y2;
+          const dPath = verticalFirstCablePath(x1, y1, x2, y2, spread);
+          const stroke = c.cableStyle === 'manual' ? '#cbd5e1' : '#38bdf8';
+          const slackIn = slackAllowanceFeet * 12;
+          const orthRun = cableRunInchesOrthogonalAnchors(
+            x1,
+            y1,
+            x2,
+            y2,
+            spread,
+            unitHeightPx,
+            inchesPerRU,
+            rackWidthPx,
+            rackWidthInches,
+          );
+          /* Always derive from current anchor geometry when devices move — do not freeze on saved minCableLengthInches */
+          const minInches = roundCableLengthInches(orthRun + slackIn + (c.extraSlackInches ?? 0));
+          const lengthLabel = `>${formatCableLengthInches(minInches)}"`;
+          const connectorLabel = `${c.fromPort.type} → ${c.toPort.type}`;
+          const fromEdge = c.routeFromEdge ?? 'right';
+          const toEdge = c.routeToEdge ?? 'left';
+          const labelX = (x1 + x2) / 2;
+          const labelYBase = yH;
+          return (
+            <g key={c.id} style={{ pointerEvents: 'auto' }}>
+              <path
+                d={dPath}
+                fill="none"
+                stroke={stroke}
+                strokeWidth={c.cableStyle === 'manual' ? 2.25 : 2.75}
+                opacity={0.98}
+                style={{ pointerEvents: 'none', filter: 'drop-shadow(0 1px 2px rgb(0 0 0 / 0.85))' }}
+              />
+              {portSocketCircle(x1, y1, fromEdge)}
+              {portSocketCircle(x2, y2, toEdge)}
+              <circle
+                cx={x1}
+                cy={y1}
+                r={6}
+                fill="#020617"
+                stroke={stroke}
+                strokeWidth={2}
+                style={{ pointerEvents: 'none' }}
+              />
+              <circle
+                cx={x2}
+                cy={y2}
+                r={6}
+                fill="#020617"
+                stroke={stroke}
+                strokeWidth={2}
+                style={{ pointerEvents: 'none' }}
+              />
+              <text
+                x={labelX}
+                y={labelYBase - 1}
+                textAnchor="middle"
+                fill="#f8fafc"
+                stroke="#020617"
+                strokeWidth={3}
+                style={{
+                  fontSize: 11,
+                  pointerEvents: 'none',
+                  fontWeight: 700,
+                  paintOrder: 'stroke fill',
+                }}
+              >
+                {connectorLabel}
+              </text>
+              <text
+                x={labelX}
+                y={labelYBase + 14}
+                textAnchor="middle"
+                fill="#e2e8f0"
+                stroke="#020617"
+                strokeWidth={2.5}
+                style={{
+                  fontSize: 10,
+                  pointerEvents: 'none',
+                  fontWeight: 600,
+                  paintOrder: 'stroke fill',
+                }}
+              >
+                {lengthLabel}
+              </text>
+              {c.cableType && c.cableType !== connectorLabel ? (
+                <text
+                  x={labelX}
+                  y={labelYBase + 28}
+                  textAnchor="middle"
+                  fill="#cbd5e1"
+                  stroke="#020617"
+                  strokeWidth={2}
+                  style={{
+                    fontSize: 9,
+                    pointerEvents: 'none',
+                    paintOrder: 'stroke fill',
+                  }}
+                >
+                  {c.cableType.length > 36 ? `${c.cableType.slice(0, 34)}…` : c.cableType}
+                </text>
+              ) : null}
               {onRemoveConnection && (
                 <path
                   d={dPath}
@@ -773,32 +989,34 @@ export function RackCableOverlay({
             </g>
           );
         })}
-        {drag && (
+        {drag ? (
           <path
-            d={`M ${drag.startX} ${drag.startY} L ${drag.curX} ${drag.curY}`}
+            d={verticalFirstCablePath(drag.startX, drag.startY, drag.curX, drag.curY, 0)}
             fill="none"
-            stroke="#111827"
-            strokeWidth={1.5}
-            strokeDasharray="4 2"
-            style={{ pointerEvents: 'none' }}
+            stroke="#67e8f9"
+            strokeWidth={2.5}
+            strokeDasharray="7 4"
+            opacity={0.95}
+            style={{ pointerEvents: 'none', filter: 'drop-shadow(0 0 6px rgb(34 211 238 / 0.45))' }}
           />
-        )}
+        ) : null}
       </svg>
 
       {drag && (
         <div
-          className="pointer-events-none absolute rounded border border-gray-800 bg-white/95 px-1.5 py-0.5 text-[10px] font-mono font-semibold text-gray-900 shadow"
+          className="pointer-events-none absolute rounded-md border border-cyan-500/40 bg-slate-950 px-2.5 py-1.5 text-xs font-mono font-bold tabular-nums text-cyan-100 shadow-xl shadow-black/70 ring-1 ring-cyan-500/20"
           style={{
-            left: Math.min(drag.curX + 8, rackWidthPx - 52),
-            top: Math.max(4, drag.curY - 20),
+            left: Math.min(drag.curX + 8, rackWidthPx - 72),
+            top: Math.max(4, drag.curY - 28),
           }}
         >
           {formatCableLengthInches(
-            cableRunInchesBetweenAnchors(
+            cableRunInchesOrthogonalAnchors(
               drag.startX,
               drag.startY,
               drag.curX,
               drag.curY,
+              0,
               unitHeightPx,
               inchesPerRU,
               rackWidthPx,
@@ -817,7 +1035,7 @@ export function RackCableOverlay({
         const { leftPx, widthPx } = deviceFaceHorizontalSpanPx(d, rackWidthPx, rackWidthInches);
         const faceW = Math.max(widthPx, EDGE_STRIP_PX * 2 + 2);
         const stripClass =
-          'pointer-events-auto absolute touch-none cursor-crosshair select-none bg-transparent hover:bg-blue-500/15 active:bg-blue-500/25';
+          'pointer-events-auto absolute touch-none cursor-crosshair select-none border-y border-transparent bg-slate-950/40 hover:border-cyan-500/35 hover:bg-cyan-950/50 active:bg-cyan-900/40';
         return (
           <div key={`edge-${d.id}`}>
             <div
@@ -874,8 +1092,8 @@ export function RackCableOverlay({
             />
             {hoveredId === d.id && suggestions.length > 0 && (
               <div
-                className="pointer-events-auto absolute z-[9] max-h-48 w-[min(220px,calc(100%-24px))] overflow-y-auto rounded-lg border border-gray-200 bg-white p-2 text-xs shadow-lg"
-                style={{ left: 8, top: Math.min(top + rowH + 4, rackHeightPx - 120) }}
+                className="pointer-events-auto absolute z-[9] max-h-52 w-[min(280px,calc(100%-16px))] overflow-y-auto rounded-xl border border-slate-700/90 bg-slate-950 p-3 text-sm text-slate-100 shadow-2xl shadow-black/80 ring-1 ring-cyan-950/60"
+                style={{ left: 8, top: Math.min(top + rowH + 4, rackHeightPx - 140) }}
                 onMouseDown={(e) => e.stopPropagation()}
                 onMouseEnter={() => {
                   clearHoverLeaveTimer();
@@ -883,7 +1101,9 @@ export function RackCableOverlay({
                 }}
                 onMouseLeave={() => scheduleHoverClear(d.id)}
               >
-                <div className="mb-1 font-semibold text-gray-800">Suggested connections</div>
+                <div className="mb-2 border-b border-slate-700 pb-2 text-sm font-bold uppercase tracking-wide text-cyan-200">
+                  Suggested connections
+                </div>
                 <ul className="space-y-1">
                   {suggestions.map((s, i) => {
                     const from = byId.get(hoveredId)!;
@@ -891,7 +1111,7 @@ export function RackCableOverlay({
                       <li key={`${s.to.id}-${i}`}>
                         <button
                           type="button"
-                          className="w-full rounded border border-transparent px-2 py-1 text-left hover:border-blue-300 hover:bg-blue-50"
+                          className="w-full rounded-lg border border-slate-800 bg-slate-900/90 px-3 py-2 text-left text-sm font-medium leading-snug text-slate-100 hover:border-cyan-600/50 hover:bg-slate-800 hover:text-cyan-50"
                           onClick={() => handleSuggestionClick(from, s.to, s.pair)}
                         >
                           {s.label}

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Plus, X } from 'lucide-react';
 import type { Device, Port } from '../data/equipment';
 import { FOX_EQUIPMENT_CHANGED_EVENT, saveCustomDevice } from '../utils/customDevices';
@@ -11,7 +12,7 @@ import {
   searchDevicesByName,
 } from '../utils/deviceCatalogSearch';
 import { prefetchServerCatalogDevices } from '../utils/serverCatalogCache';
-import { prefetchDeviceCategories } from '../utils/deviceCategoryCache';
+import { ensureDeviceCategoryInDb, prefetchDeviceCategories } from '../utils/deviceCategoryCache';
 import { clampDeviceWidthToRack } from '../utils/rackDevicePlacement';
 import { RackCategoryField } from './RackCategoryField';
 
@@ -139,7 +140,7 @@ export function ManualDeviceAdd({
   };
 
   const finishAdd = useCallback(
-    (saveToFoxDb: boolean) => {
+    async (saveToFoxDb: boolean) => {
       const mfr = manufacturer.trim();
       const mdl = model.trim();
       if (!mfr || !mdl) return;
@@ -157,13 +158,18 @@ export function ManualDeviceAdd({
       const heightInU = match?.heightInU ?? formHeightU;
       const widthIn = match?.deviceWidthInches ?? faceW;
 
+      const effectiveManualCategory = match
+        ? deviceCategoryToManualLabel(match.category)
+        : category.trim() || 'Other';
+      await ensureDeviceCategoryInDb(effectiveManualCategory);
+
       if (saveToFoxDb && !findExactDeviceByName(displayName, devicePool)) {
         saveCustomDevice({
           id: `custom-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
           name: displayName,
           manufacturer: mfr,
           model: mdl,
-          category: manualCategoryToDeviceCategory(category),
+          category: manualCategoryToDeviceCategory(effectiveManualCategory),
           ports: [],
           heightInU,
           deviceWidthInches: widthIn,
@@ -178,7 +184,7 @@ export function ManualDeviceAdd({
         manufacturer: mfr,
         model: mdl,
         name: displayName,
-        category: match ? deviceCategoryToManualLabel(match.category) : category,
+        category: effectiveManualCategory,
         heightInU,
         heightInches:
           match?.physicalHeightInches != null
@@ -281,7 +287,7 @@ export function ManualDeviceAdd({
     }
   };
 
-  const handleClosePanel = () => {
+  const handleClosePanel = useCallback(() => {
     setIsOpen(false);
     setShowFoxPrompt(false);
     setSuggestionsOpen(false);
@@ -292,12 +298,37 @@ export function ManualDeviceAdd({
     setHeightValue('1');
     setHeightUnit('U');
     setRackWidthInches('19');
-  };
+  }, []);
+
+  useEffect(() => {
+    if (!isOpen || !rackDark) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') handleClosePanel();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isOpen, rackDark, handleClosePanel]);
+
+  useEffect(() => {
+    if (!isOpen || !rackDark) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [isOpen, rackDark]);
+
+  useEffect(() => {
+    if (isOpen && rackDark) {
+      requestAnimationFrame(() => manufacturerRef.current?.focus());
+    }
+  }, [isOpen, rackDark]);
 
   if (!isOpen) {
+    /** Same footprint as CSVImport “Choose file” (px-6 py-2 font-medium); red fill, no extra border so sizes match. */
     const landingBtn =
       cable && landingPrimaryStyle
-        ? 'flex items-center gap-2 rounded-lg border-2 border-[#CC0000] bg-[#CC0000] px-6 py-2 font-semibold text-white shadow-md transition-colors hover:border-[#990000] hover:bg-[#990000]'
+        ? 'flex items-center gap-2 rounded-lg bg-[#CC0000] px-6 py-2 font-medium text-white transition-colors hover:bg-[#990000]'
         : cable
           ? 'flex items-center gap-2 rounded-lg bg-[#003366] px-6 py-3 text-base font-semibold text-white shadow-md transition-colors hover:bg-[#004080] sm:text-lg'
           : 'flex items-center gap-2 rounded-lg bg-[#003366] px-4 py-2 text-base font-semibold text-white hover:bg-blue-700';
@@ -309,7 +340,7 @@ export function ManualDeviceAdd({
     );
   }
 
-  return (
+  const formCard = (
     <div
       className={`rounded-xl border p-4 shadow-md ${
         rackDark
@@ -320,7 +351,10 @@ export function ManualDeviceAdd({
       }`}
     >
       <div className="mb-4 flex items-center justify-between">
-        <h3 className={`font-semibold ${rackDark ? 'text-sky-200' : cable ? 'text-[#003366]' : 'text-gray-900'}`}>
+        <h3
+          id="manual-add-device-title"
+          className={`font-semibold ${rackDark ? 'text-sky-200' : cable ? 'text-[#003366]' : 'text-gray-900'}`}
+        >
           Add device manually
         </h3>
         <button
@@ -456,6 +490,7 @@ export function ManualDeviceAdd({
             showHint={false}
             value={category}
             onChange={setCategory}
+            placeholder="Type or pick a category (autocomplete)"
             inputClassName={`w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 ${
               rackDark
                 ? 'border-slate-600 bg-slate-900/90 text-slate-100 focus:ring-sky-500/40'
@@ -591,4 +626,30 @@ export function ManualDeviceAdd({
       </form>
     </div>
   );
+
+  if (rackDark) {
+    return createPortal(
+      <div
+        className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="manual-add-device-title"
+      >
+        <div
+          className="absolute inset-0 bg-slate-950/70 backdrop-blur-[1px]"
+          aria-hidden
+          onClick={handleClosePanel}
+        />
+        <div
+          className="relative z-10 w-full max-w-2xl max-h-[min(90vh,880px)] overflow-y-auto rounded-xl shadow-2xl"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {formCard}
+        </div>
+      </div>,
+      document.body,
+    );
+  }
+
+  return formCard;
 }

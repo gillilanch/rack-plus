@@ -165,7 +165,7 @@ export function UnassignedDevices({
   return (
     <div
       ref={drop}
-      className={`flex h-full min-h-0 flex-col gap-3 rounded-lg transition-colors ${isOver ? 'bg-sky-950/25 ring-2 ring-sky-600/50' : ''}`}
+      className={`flex flex-col gap-3 rounded-lg transition-colors ${isOver ? 'bg-sky-950/25 ring-2 ring-sky-600/50' : ''}`}
     >
       <div className="flex shrink-0 items-center justify-between">
         <h3 className="font-semibold text-slate-100">

@@ -8,6 +8,8 @@ import {
   clampDeviceWidthToRack,
   clampHorizontalOffset,
   DEFAULT_DEVICE_WIDTH_INCHES,
+  parseDeviceWidthInchesInput,
+  parseHorizontalOffsetInchesInput,
 } from '../utils/rackDevicePlacement';
 import { RackCategoryField } from './RackCategoryField';
 
@@ -46,10 +48,18 @@ export function RackDeviceEditor({
       ? rackWidthProp
       : DEFAULT_RACK_WIDTH_INCHES;
   const [editedDevice, setEditedDevice] = useState<RackDevice | null>(null);
+  const [faceWidthStr, setFaceWidthStr] = useState('');
+  const [faceOffsetStr, setFaceOffsetStr] = useState('');
 
   useEffect(() => {
-    if (device) setEditedDevice({ ...device });
-  }, [device]);
+    if (device && isOpen) {
+      setEditedDevice({ ...device });
+      const w = device.deviceWidthInches;
+      setFaceWidthStr(w != null && Number.isFinite(w) ? String(w) : '');
+      const o = device.horizontalOffsetInches;
+      setFaceOffsetStr(o != null && Number.isFinite(o) ? String(o) : '');
+    }
+  }, [device, isOpen]);
 
   if (!isOpen || !editedDevice) return null;
 
@@ -81,16 +91,8 @@ export function RackDeviceEditor({
       manufacturer: m,
       model: md,
     });
-    const w =
-      editedDevice.deviceWidthInches != null && Number.isFinite(editedDevice.deviceWidthInches)
-        ? editedDevice.deviceWidthInches
-        : DEFAULT_DEVICE_WIDTH_INCHES;
-    const widthClamped = clampDeviceWidthToRack(w, rackWidthInches);
-    const offRaw =
-      editedDevice.horizontalOffsetInches != null && Number.isFinite(editedDevice.horizontalOffsetInches)
-        ? editedDevice.horizontalOffsetInches
-        : 0;
-    const offClamped = clampHorizontalOffset(offRaw, widthClamped, rackWidthInches);
+    const widthClamped = parseDeviceWidthInchesInput(faceWidthStr, rackWidthInches);
+    const offClamped = parseHorizontalOffsetInchesInput(faceOffsetStr, widthClamped, rackWidthInches);
     const payload: RackDevice = {
       ...editedDevice,
       manufacturer: m,
@@ -106,18 +108,25 @@ export function RackDeviceEditor({
     if (ok !== false) onClose();
   };
 
+  const field =
+    'w-full rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-sky-500';
+  const labelCls = 'mb-1 block text-xs font-medium text-slate-300';
+  const hintCls = 'mt-1 text-xs text-slate-400';
+
   return (
-    <div className="no-print fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+    <div className="no-print fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl border border-slate-600 bg-slate-900 text-slate-100 shadow-2xl shadow-black/40">
         {/* Header */}
-        <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
+        <div className="sticky top-0 flex items-center justify-between border-b border-slate-700 bg-slate-900 px-6 py-4">
           <div>
-            <h2 className="text-xl font-bold text-gray-900">Configure Device I/O</h2>
-            <p className="text-sm text-gray-600 mt-1">{getDeviceDisplayName(editedDevice)}</p>
+            <h2 className="text-xl font-bold text-slate-50">Configure Device I/O</h2>
+            <p className="mt-1 text-sm text-slate-300">{getDeviceDisplayName(editedDevice)}</p>
           </div>
           <button
+            type="button"
             onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 transition-colors"
+            className="rounded-lg p-1 text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-100"
+            aria-label="Close"
           >
             <X className="size-6" />
           </button>
@@ -126,11 +135,11 @@ export function RackDeviceEditor({
         {/* Content */}
         <div className="p-6">
           {/* Category & rack height (applies to unassigned and placed devices) */}
-          <div className="mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
-            <h3 className="mb-3 text-sm font-medium text-gray-800">Manufacturer & model</h3>
+          <div className="mb-6 rounded-lg border border-slate-600 bg-slate-800/80 p-4">
+            <h3 className="mb-3 text-sm font-medium text-slate-100">Manufacturer & model</h3>
             <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>
-                <label htmlFor="rack-edit-mfr" className="mb-1 block text-xs font-medium text-gray-600">
+                <label htmlFor="rack-edit-mfr" className={labelCls}>
                   Manufacturer
                 </label>
                 <input
@@ -140,11 +149,11 @@ export function RackDeviceEditor({
                   onChange={(e) =>
                     setEditedDevice({ ...editedDevice, manufacturer: e.target.value })
                   }
-                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className={field}
                 />
               </div>
               <div>
-                <label htmlFor="rack-edit-model" className="mb-1 block text-xs font-medium text-gray-600">
+                <label htmlFor="rack-edit-model" className={labelCls}>
                   Model / model number
                 </label>
                 <input
@@ -152,11 +161,11 @@ export function RackDeviceEditor({
                   type="text"
                   value={editedDevice.model ?? ''}
                   onChange={(e) => setEditedDevice({ ...editedDevice, model: e.target.value })}
-                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className={field}
                 />
               </div>
             </div>
-            <h3 className="mb-3 text-sm font-medium text-gray-800">Category & height</h3>
+            <h3 className="mb-3 text-sm font-medium text-slate-100">Category & height</h3>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>
                 <RackCategoryField
@@ -165,11 +174,12 @@ export function RackDeviceEditor({
                   showHint={false}
                   value={editedDevice.category}
                   onChange={(cat) => setEditedDevice({ ...editedDevice, category: cat })}
-                  inputClassName="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  labelClassName={labelCls}
+                  inputClassName={field}
                 />
               </div>
               <div>
-                <label htmlFor="rack-edit-u" className="mb-1 block text-xs font-medium text-gray-600">
+                <label htmlFor="rack-edit-u" className={labelCls}>
                   Rack height (U)
                 </label>
                 <input
@@ -186,14 +196,14 @@ export function RackDeviceEditor({
                       physicalHeightInches: inchesFromRU(u, inchesPerRU),
                     });
                   }}
-                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className={field}
                 />
-                <p className="mt-1 text-xs text-gray-500">
+                <p className={hintCls}>
                   1U = {inchesPerRU}&quot; (rack settings)
                 </p>
               </div>
               <div className="sm:col-span-2">
-                <label htmlFor="rack-edit-in" className="mb-1 block text-xs font-medium text-gray-600">
+                <label htmlFor="rack-edit-in" className={labelCls}>
                   Physical height (inches)
                 </label>
                 <input
@@ -218,86 +228,89 @@ export function RackDeviceEditor({
                     }
                   }}
                   placeholder="Fills rack U from your inches-per-U setting"
-                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className={field}
                 />
-                <p className="mt-1 text-xs text-gray-500">
+                <p className={hintCls}>
                   Edit U or inches — the other updates from {inchesPerRU}&quot;/U.
                 </p>
               </div>
             </div>
           </div>
 
-          <div className="mb-6 rounded-lg border-2 border-blue-200 bg-blue-50/80 p-4">
-            <h3 className="mb-1 text-sm font-bold text-blue-950">Front panel — side by side on the same U</h3>
-            <p className="mb-3 text-xs leading-relaxed text-blue-900">
-              This rack is <strong>{rackWidthInches}&quot;</strong> wide. Anything that shares the same rack unit (same
-              vertical row) must fit in that width: the <strong>sum of device widths</strong> cannot exceed{' '}
+          <div className="mb-6 rounded-lg border border-sky-800/80 bg-sky-950/40 p-4">
+            <h3 className="mb-1 text-sm font-bold text-sky-100">Front panel — side by side on the same U</h3>
+            <p className="mb-3 text-xs leading-relaxed text-sky-200/90">
+              This rack is <strong className="text-sky-50">{rackWidthInches}&quot;</strong> wide. Anything that shares the same rack unit (same
+              vertical row) must fit in that width: the <strong className="text-sky-50">sum of device widths</strong> cannot exceed{' '}
               {rackWidthInches}&quot;, and horizontal positions must not overlap. Example: two 9.5&quot; devices can sit
               side by side; two full 19&quot; devices cannot.
             </p>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>
-                <label htmlFor="rack-edit-face-w" className="mb-1 block text-xs font-medium text-gray-600">
+                <label htmlFor="rack-edit-face-w" className={labelCls}>
                   Device width (inches)
                 </label>
                 <input
                   id="rack-edit-face-w"
-                  type="number"
-                  min={0.25}
-                  max={rackWidthInches}
-                  step={0.25}
-                  value={editedDevice.deviceWidthInches ?? DEFAULT_DEVICE_WIDTH_INCHES}
-                  onChange={(e) => {
-                    const n = parseFloat(e.target.value);
-                    const width = Number.isFinite(n) ? clampDeviceWidthToRack(n, rackWidthInches) : DEFAULT_DEVICE_WIDTH_INCHES;
+                  type="text"
+                  inputMode="decimal"
+                  autoComplete="off"
+                  placeholder={`${DEFAULT_DEVICE_WIDTH_INCHES}`}
+                  value={faceWidthStr}
+                  onChange={(e) => setFaceWidthStr(e.target.value)}
+                  onBlur={() => {
+                    const width = parseDeviceWidthInchesInput(faceWidthStr, rackWidthInches);
+                    setFaceWidthStr(String(width));
                     setEditedDevice({
                       ...editedDevice,
                       deviceWidthInches: width,
                       horizontalOffsetInches: clampHorizontalOffset(
-                        editedDevice.horizontalOffsetInches ?? 0,
+                        parseHorizontalOffsetInchesInput(faceOffsetStr, width, rackWidthInches),
                         width,
                         rackWidthInches,
                       ),
                     });
                   }}
-                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className={field}
                 />
-                <p className="mt-1 text-xs text-gray-500">Default 19&quot;. Lower values let multiple units share one U.</p>
+                <p className={hintCls}>
+                  Type any width (blank = {DEFAULT_DEVICE_WIDTH_INCHES}&quot;). Lower values let multiple units share one U.
+                </p>
               </div>
               <div>
-                <label htmlFor="rack-edit-face-x" className="mb-1 block text-xs font-medium text-gray-600">
+                <label htmlFor="rack-edit-face-x" className={labelCls}>
                   Offset from left rail (inches)
                 </label>
                 <input
                   id="rack-edit-face-x"
-                  type="number"
-                  min={0}
-                  max={Math.max(0, rackWidthInches - (editedDevice.deviceWidthInches ?? DEFAULT_DEVICE_WIDTH_INCHES))}
-                  step={0.25}
-                  value={editedDevice.horizontalOffsetInches ?? 0}
-                  onChange={(e) => {
-                    const n = parseFloat(e.target.value);
-                    const width = clampDeviceWidthToRack(
-                      editedDevice.deviceWidthInches ?? DEFAULT_DEVICE_WIDTH_INCHES,
-                      rackWidthInches,
-                    );
-                    const off = Number.isFinite(n)
-                      ? clampHorizontalOffset(n, width, rackWidthInches)
-                      : 0;
-                    setEditedDevice({ ...editedDevice, horizontalOffsetInches: off, deviceWidthInches: width });
+                  type="text"
+                  inputMode="decimal"
+                  autoComplete="off"
+                  placeholder="0"
+                  value={faceOffsetStr}
+                  onChange={(e) => setFaceOffsetStr(e.target.value)}
+                  onBlur={() => {
+                    const width = parseDeviceWidthInchesInput(faceWidthStr, rackWidthInches);
+                    const off = parseHorizontalOffsetInchesInput(faceOffsetStr, width, rackWidthInches);
+                    setFaceOffsetStr(String(off));
+                    setEditedDevice({
+                      ...editedDevice,
+                      deviceWidthInches: width,
+                      horizontalOffsetInches: off,
+                    });
                   }}
-                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className={field}
                 />
-                <p className="mt-1 text-xs text-gray-500">Slide left/right along the rack face when placed.</p>
+                <p className={hintCls}>Slide left/right along the rack face when placed.</p>
               </div>
             </div>
           </div>
 
-          <div className="mb-6 rounded-lg border border-gray-200 bg-gray-50/80 p-4">
-            <h3 className="mb-3 text-sm font-medium text-gray-800">Power, depth & notes</h3>
+          <div className="mb-6 rounded-lg border border-slate-600 bg-slate-800/80 p-4">
+            <h3 className="mb-3 text-sm font-medium text-slate-100">Power, depth & notes</h3>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>
-                <label htmlFor="rack-edit-depth" className="mb-1 block text-xs font-medium text-gray-600">
+                <label htmlFor="rack-edit-depth" className={labelCls}>
                   Face depth (inches)
                 </label>
                 <input
@@ -319,11 +332,11 @@ export function RackDeviceEditor({
                     }
                   }}
                   placeholder="Optional"
-                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className={field}
                 />
               </div>
               <div>
-                <label htmlFor="rack-edit-power" className="mb-1 block text-xs font-medium text-gray-600">
+                <label htmlFor="rack-edit-power" className={labelCls}>
                   Power (sheet / PSU)
                 </label>
                 <input
@@ -337,11 +350,11 @@ export function RackDeviceEditor({
                     })
                   }
                   placeholder="Optional"
-                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className={field}
                 />
               </div>
               <div className="sm:col-span-2">
-                <label htmlFor="rack-edit-notes" className="mb-1 block text-xs font-medium text-gray-600">
+                <label htmlFor="rack-edit-notes" className={labelCls}>
                   Notes
                 </label>
                 <textarea
@@ -355,7 +368,7 @@ export function RackDeviceEditor({
                     })
                   }
                   placeholder="Optional — e.g. catalog description or site-specific detail"
-                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className={field}
                 />
               </div>
             </div>
@@ -363,13 +376,14 @@ export function RackDeviceEditor({
 
           {/* Ports Configuration */}
           <div className="mb-6">
-            <div className="flex items-center justify-between mb-3">
-              <label className="block text-sm font-medium text-gray-700">
+            <div className="mb-3 flex items-center justify-between">
+              <label className="block text-sm font-medium text-slate-200">
                 Input/Output Ports ({editedDevice.ports.length})
               </label>
               <button
+                type="button"
                 onClick={handleAddPort}
-                className="flex items-center gap-1 px-3 py-1 text-sm bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors"
+                className="flex items-center gap-1 rounded-lg bg-slate-800 px-3 py-1.5 text-sm text-sky-300 transition-colors hover:bg-slate-700"
               >
                 <Plus className="size-4" />
                 Add Port
@@ -377,22 +391,22 @@ export function RackDeviceEditor({
             </div>
 
             {editedDevice.ports.length === 0 ? (
-              <div className="p-8 text-center text-gray-500 border-2 border-dashed border-gray-300 rounded-lg">
-                No ports configured. Click "Add Port" to define inputs and outputs.
+              <div className="rounded-lg border-2 border-dashed border-slate-600 p-8 text-center text-slate-400">
+                No ports configured. Click &quot;Add Port&quot; to define inputs and outputs.
               </div>
             ) : (
               <div className="space-y-3">
                 {editedDevice.ports.map((port, index) => (
                   <div
                     key={index}
-                    className="flex gap-2 items-start p-3 bg-gray-50 rounded-lg border border-gray-200"
+                    className="flex items-start gap-2 rounded-lg border border-slate-600 bg-slate-800/60 p-3"
                   >
-                    <div className="flex-1 grid grid-cols-1 gap-2 sm:grid-cols-4">
+                    <div className="grid flex-1 grid-cols-1 gap-2 sm:grid-cols-4">
                       {/* Port Type */}
                       <select
                         value={port.type}
                         onChange={(e) => handlePortChange(index, 'type', e.target.value as ConnectorType)}
-                        className="px-3 py-2 border border-gray-300 rounded bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        className="rounded border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500"
                       >
                         {connectorTypes.map((type) => (
                           <option key={type} value={type}>
@@ -407,7 +421,7 @@ export function RackDeviceEditor({
                         onChange={(e) =>
                           handlePortChange(index, 'direction', e.target.value as Port['direction'])
                         }
-                        className="px-3 py-2 border border-gray-300 rounded bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        className="rounded border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500"
                       >
                         <option value="input">Input</option>
                         <option value="output">Output</option>
@@ -431,7 +445,7 @@ export function RackDeviceEditor({
                           }
                         }}
                         placeholder="Count"
-                        className="min-w-0 px-3 py-2 border border-gray-300 rounded bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        className="min-w-0 rounded border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-sky-500"
                       />
 
                       {/* Label */}
@@ -440,13 +454,15 @@ export function RackDeviceEditor({
                         value={port.label || ''}
                         onChange={(e) => handlePortChange(index, 'label', e.target.value)}
                         placeholder="Label (optional)"
-                        className="px-3 py-2 border border-gray-300 rounded bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        className="rounded border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-sky-500"
                       />
                     </div>
 
                     <button
+                      type="button"
                       onClick={() => handleRemovePort(index)}
-                      className="p-2 text-red-500 hover:bg-red-50 rounded transition-colors"
+                      className="rounded p-2 text-red-400 transition-colors hover:bg-red-950/50"
+                      aria-label="Remove port"
                     >
                       <Trash2 className="size-4" />
                     </button>
@@ -457,33 +473,35 @@ export function RackDeviceEditor({
           </div>
 
           {/* Port Legend */}
-          <div className="p-3 bg-blue-50 rounded-lg border border-blue-200">
-            <div className="text-xs font-semibold text-blue-900 mb-2">Port Direction Guide:</div>
-            <div className="grid grid-cols-3 gap-2 text-xs text-blue-800">
+          <div className="rounded-lg border border-slate-600 bg-slate-800/80 p-3">
+            <div className="mb-2 text-xs font-semibold text-slate-200">Port Direction Guide:</div>
+            <div className="grid grid-cols-1 gap-2 text-xs text-slate-300 sm:grid-cols-3">
               <div>
-                <span className="font-medium">Input:</span> Receives signal
+                <span className="font-medium text-slate-100">Input:</span> Receives signal
               </div>
               <div>
-                <span className="font-medium">Output:</span> Sends signal
+                <span className="font-medium text-slate-100">Output:</span> Sends signal
               </div>
               <div>
-                <span className="font-medium">Both:</span> Bidirectional
+                <span className="font-medium text-slate-100">Both:</span> Bidirectional
               </div>
             </div>
           </div>
         </div>
 
         {/* Actions */}
-        <div className="sticky bottom-0 bg-white border-t border-gray-200 px-6 py-4 flex gap-3 justify-end">
+        <div className="sticky bottom-0 flex justify-end gap-3 border-t border-slate-700 bg-slate-900 px-6 py-4">
           <button
+            type="button"
             onClick={onClose}
-            className="px-6 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors"
+            className="rounded-lg border border-slate-500 px-6 py-2 text-slate-200 transition-colors hover:bg-slate-800"
           >
             Cancel
           </button>
           <button
+            type="button"
             onClick={handleSave}
-            className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-semibold"
+            className="rounded-lg bg-[#003366] px-6 py-2 font-semibold text-white transition-colors hover:bg-blue-800"
           >
             Save Changes
           </button>

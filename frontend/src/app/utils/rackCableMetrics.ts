@@ -73,6 +73,29 @@ export function cableRunInchesBetweenAnchors(
 }
 
 /**
+ * Cable run for a vertical-first L: straight along the source column to the destination row,
+ * then across the face (horizontal at y2 + spreadY). No detour through mid-rack height.
+ * `spreadY` fans bundled cables (px offset on the horizontal run).
+ */
+export function cableRunInchesOrthogonalAnchors(
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  spreadY: number,
+  unitHeightPx: number,
+  inchesPerRU: number,
+  rackWidthPx: number,
+  rackWidthInches: number,
+): number {
+  const yH = y2 + spreadY;
+  const v1 = verticalCableInchesBetweenAnchorYs(y1, yH, unitHeightPx, inchesPerRU);
+  const h = horizontalCableInchesBetweenAnchorXs(x1, x2, rackWidthPx, rackWidthInches);
+  const v2 = verticalCableInchesBetweenAnchorYs(yH, y2, unitHeightPx, inchesPerRU);
+  return roundCableLengthInches(v1 + h + v2);
+}
+
+/**
  * Geometric minimum between two placed devices (no pixel path): vertical from U centers × inchesPerRU,
  * horizontal from front-panel midpoint to midpoint along the rack width; then straight vs diagonal.
  */
@@ -131,7 +154,7 @@ export function cableRunInchesFromPixelAnchors(
   return roundCableLengthInches(run + slackFeet * 12 + extraSlackInches);
 }
 
-/** Geometric face run only (no rack slack), for port-mismatch hints — same rounding as stored lengths. */
+/** Geometric face run only (no rack slack), for port-mismatch hints — orthogonal path, same rounding as stored lengths. */
 export function dragCableRunDisplayInches(args: {
   x1: number;
   y1: number;
@@ -144,11 +167,12 @@ export function dragCableRunDisplayInches(args: {
 }): number {
   const { x1, y1, x2, y2, unitHeightPx, inchesPerRU, rackWidthPx, rackWidthInches } = args;
   if (unitHeightPx <= 0) return 0;
-  const inches = cableRunInchesBetweenAnchors(
+  const inches = cableRunInchesOrthogonalAnchors(
     x1,
     y1,
     x2,
     y2,
+    0,
     unitHeightPx,
     inchesPerRU,
     rackWidthPx,

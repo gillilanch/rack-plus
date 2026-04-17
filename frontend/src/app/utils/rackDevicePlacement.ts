@@ -34,6 +34,28 @@ export function clampHorizontalOffset(offsetInches: number, deviceWidthInches: n
   return Math.min(Math.max(offsetInches, 0), maxOff);
 }
 
+/** Free-typed width field: blank → default 19". */
+export function parseDeviceWidthInchesInput(raw: string, rackWidthInches: number): number {
+  const t = raw.trim().replace(/,/g, '.');
+  if (t === '') return DEFAULT_DEVICE_WIDTH_INCHES;
+  const n = parseFloat(t);
+  if (!Number.isFinite(n)) return DEFAULT_DEVICE_WIDTH_INCHES;
+  return clampDeviceWidthToRack(n, rackWidthInches);
+}
+
+/** Free-typed offset field: blank → 0. */
+export function parseHorizontalOffsetInchesInput(
+  raw: string,
+  deviceWidthInches: number,
+  rackWidthInches: number,
+): number {
+  const t = raw.trim().replace(/,/g, '.');
+  if (t === '') return 0;
+  const n = parseFloat(t);
+  if (!Number.isFinite(n)) return 0;
+  return clampHorizontalOffset(n, deviceWidthInches, rackWidthInches);
+}
+
 /** Apply sane width/offset for a device given rack width. */
 export function normalizeDeviceHorizontalFields(device: RackDevice, rackWidthInches: number): RackDevice {
   const rw = rackWidthInches > 0 ? rackWidthInches : DEFAULT_RACK_WIDTH_INCHES;

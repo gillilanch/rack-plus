@@ -18,6 +18,7 @@ racksRouter.get('/', async (_req, res, next) => {
         rackWidthInches: r.rackWidthInches,
         rackDepthInches: r.rackDepthInches,
         deviceCount: r._count.devices,
+        createdAt: r.createdAt.toISOString(),
         updatedAt: r.updatedAt.toISOString(),
         savedByDisplayName: r.savedByDisplayName,
         savedByVerified: r.savedByVerified,
@@ -66,6 +67,24 @@ racksRouter.put('/:id', async (req, res, next) => {
     }
     const config = await rackRepo.upsertRackFull(req.params.id, body);
     res.json(config);
+  } catch (e) {
+    next(e);
+  }
+});
+
+racksRouter.delete('/:id', async (req, res, next) => {
+  try {
+    const id = typeof req.params.id === 'string' ? req.params.id.trim() : '';
+    if (!id) {
+      res.status(400).json({ error: 'Missing rack id' });
+      return;
+    }
+    const ok = await rackRepo.deleteRackById(id);
+    if (!ok) {
+      res.status(404).json({ error: 'Rack not found' });
+      return;
+    }
+    res.status(204).send();
   } catch (e) {
     next(e);
   }

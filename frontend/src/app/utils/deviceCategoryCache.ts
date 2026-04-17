@@ -1,4 +1,7 @@
+import { devices as builtInDevices } from '../data/equipment';
 import { apiUrl } from '../api/apiUrl';
+import { getCustomDevices } from './customDevices';
+import { getServerCatalogDevices } from './serverCatalogCache';
 
 type CategoryRow = { id: string; name: string };
 
@@ -7,6 +10,25 @@ let inflight: Promise<void> | undefined;
 
 export function getDeviceCategoryNames(): string[] {
   return [...cachedNames];
+}
+
+/**
+ * Dropdown list: Postgres `device-categories` plus every distinct `category` string from the AVCAD
+ * server catalog sheet, built-in devices, and browser-saved custom devices (case-insensitive dedupe).
+ */
+export function getMergedDeviceCategoryNames(): string[] {
+  const merged = new Map<string, string>();
+  const add = (raw: string) => {
+    const t = raw.trim();
+    if (!t) return;
+    const k = t.toLowerCase();
+    if (!merged.has(k)) merged.set(k, t);
+  };
+  for (const n of cachedNames) add(n);
+  for (const d of getServerCatalogDevices()) add(d.category);
+  for (const d of getCustomDevices()) add(d.category);
+  for (const d of builtInDevices) add(d.category);
+  return [...merged.values()].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
 }
 
 export async function prefetchDeviceCategories(): Promise<void> {

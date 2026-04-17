@@ -35,11 +35,22 @@ import { RackPlannerWorkArea } from './RackPlannerWorkArea';
 import type { RackPortMismatchPayload } from './RackVisualizer';
 import { RackDeviceEditor } from './RackDeviceEditor';
 import { RackDualDeviceEditor } from './RackDualDeviceEditor';
-import { CurrentRacksModal } from './CurrentRacksModal';
 import { SaveRackModal, type SaveRackMode } from './SaveRackModal';
 import type { RackSaveAttribution } from '../api/racks';
-import { AlertTriangle, CloudOff, ImageDown, Loader2, Plus, Printer, Save, Settings } from 'lucide-react';
+import {
+  AlertTriangle,
+  CloudOff,
+  FileSpreadsheet,
+  ImageDown,
+  Loader2,
+  Plus,
+  Printer,
+  Save,
+  Settings,
+} from 'lucide-react';
 import { toast } from 'sonner';
+import { applyRackPngMonochromeSvg } from '../utils/rackPngExportSvg';
+import { buildRackDevicesTemplateCsv } from '../utils/rackTemplateCsv';
 import {
   clampDeviceWidthToRack,
   clampHorizontalOffset,
@@ -55,6 +66,121 @@ const RACK_SESSION_KEY = 'rackPlanner.rackId';
 
 /** Avoid one giant React commit when CSV import adds hundreds of devices (keeps UI responsive). */
 const CSV_IMPORT_DEVICE_CHUNK = 48;
+
+/**
+ * Opens a minimal print document containing the exported PNG so output matches Export PNG and fits one page.
+ */
+function printRackPngDataUrl(dataUrl: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const probe = new Image();
+    probe.onload = () => {
+      const landscape = probe.naturalWidth >= probe.naturalHeight;
+      fetch(dataUrl)
+        .then((r) => r.blob())
+        .then((blob) => {
+          const objectUrl = URL.createObjectURL(blob);
+          const iframe = document.createElement('iframe');
+          iframe.setAttribute('aria-hidden', 'true');
+          Object.assign(iframe.style, {
+            position: 'fixed',
+            right: '0',
+            bottom: '0',
+            width: '0',
+            height: '0',
+            border: '0',
+            opacity: '0',
+            pointerEvents: 'none',
+          });
+          document.body.appendChild(iframe);
+          const doc = iframe.contentDocument!;
+          const win = iframe.contentWindow!;
+
+          const pageRule = landscape
+            ? '@page { size: landscape; margin: 8mm; }'
+            : '@page { size: portrait; margin: 8mm; }';
+
+          doc.open();
+          doc.write(
+            '<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Rack</title></head><body></body></html>',
+          );
+          doc.close();
+
+          const styleEl = doc.createElement('style');
+          styleEl.textContent = `
+${pageRule}
+html, body { margin: 0; padding: 0; background: #fff; height: 100%; }
+@media print {
+  html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+  }
+  body {
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    box-sizing: border-box;
+  }
+  img.rack-print-snapshot {
+    display: block;
+    flex-shrink: 0;
+    width: 100%;
+    max-width: 100%;
+    height: auto;
+    max-height: 100%;
+    object-fit: contain;
+    object-position: top center;
+    page-break-inside: avoid;
+    page-break-after: avoid;
+  }
+}
+`;
+          doc.head.appendChild(styleEl);
+
+          const img = doc.createElement('img');
+          img.className = 'rack-print-snapshot';
+          img.alt = 'Rack diagram';
+
+          const cleanup = () => {
+            URL.revokeObjectURL(objectUrl);
+            iframe.remove();
+            resolve();
+          };
+
+          let cleaned = false;
+          const safeCleanup = () => {
+            if (cleaned) return;
+            cleaned = true;
+            cleanup();
+          };
+
+          const triggerPrint = () => {
+            requestAnimationFrame(() => {
+              setTimeout(() => {
+                win.focus();
+                win.print();
+              }, 100);
+            });
+          };
+
+          img.onload = () => triggerPrint();
+          img.onerror = () => {
+            safeCleanup();
+            reject(new Error('Could not load image for printing'));
+          };
+
+          win.addEventListener('afterprint', safeCleanup, { once: true });
+          setTimeout(safeCleanup, 180000);
+
+          doc.body.appendChild(img);
+          img.src = objectUrl;
+        })
+        .catch(reject);
+    };
+    probe.onerror = () => reject(new Error('Could not read exported image'));
+    probe.src = dataUrl;
+  });
+}
 
 const rackSizeInputPlainClass =
   'w-full rounded-lg border border-slate-300 px-4 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#003366]';
@@ -308,7 +434,6 @@ function hydrateFromConfig(config: RackConfiguration, setters: {
  * Connection maps and backend path analysis are deferred (see config/features.ts).
  */
 type RackPlannerProps = {
-  initialOpenRackLibrary?: boolean;
   /** When set (e.g. from /edit), load this rack instead of session / new rack. */
   initialRackIdToLoad?: string;
   /** When true (e.g. /rack?new=1), ignore session and create a fresh empty rack. */
@@ -316,7 +441,6 @@ type RackPlannerProps = {
 };
 
 export function RackPlanner({
-  initialOpenRackLibrary = false,
   initialRackIdToLoad,
   forceNewRack = false,
 }: RackPlannerProps = {}) {
@@ -337,7 +461,6 @@ export function RackPlanner({
   const [csvAddModalOpen, setCsvAddModalOpen] = useState(false);
   const [csvAddTargetId, setCsvAddTargetId] = useState<string | null>(null);
   const [csvAddSnapshot, setCsvAddSnapshot] = useState<CsvUnmatchedQueueItem | null>(null);
-  const [currentRacksOpen, setCurrentRacksOpen] = useState(initialOpenRackLibrary);
   const [saveRackModalOpen, setSaveRackModalOpen] = useState(false);
   const [portMismatch, setPortMismatch] = useState<RackPortMismatchPayload | null>(null);
   const [dualDevices, setDualDevices] = useState<{ a: RackDevice; b: RackDevice } | null>(null);
@@ -396,10 +519,15 @@ export function RackPlanner({
 
   const rackExportContext = useMemo(
     () => ({
+      rackName,
+      totalHeightU: totalHeight,
+      rackWidthInches,
+      rackDepthInches,
       placedDevices: devices.filter((d) => d.rackPosition !== undefined),
+      unassignedDevices: devices.filter((d) => d.rackPosition === undefined),
       connections,
     }),
-    [devices, connections],
+    [rackName, totalHeight, rackWidthInches, rackDepthInches, devices, connections],
   );
 
   const handleAddConnection = useCallback(
@@ -633,17 +761,6 @@ export function RackPlanner({
     };
   }, [hydrateSetters, initialRackIdToLoad, forceNewRack, setTotalHeight]);
 
-  const handleOpenRackFromLibrary = useCallback(
-    async (id: string) => {
-      const config = await getRack(id);
-      sessionStorage.setItem(RACK_SESSION_KEY, config.id);
-      setCsvUnmatchedQueue([]);
-      hydrateFromConfig(config, hydrateSetters);
-      setRackDirty(false);
-    },
-    [hydrateSetters],
-  );
-
   const handleSaveRack = useCallback(
     async (mode: SaveRackMode, name: string, attribution: RackSaveAttribution) => {
       const payload = {
@@ -685,24 +802,62 @@ export function RackPlanner({
     ],
   );
 
-  const handlePrint = useCallback(() => {
-    window.print();
-  }, []);
-
-  const handleExportRackPng = useCallback(async () => {
+  const captureRackPngDataUrl = useCallback(async (): Promise<string> => {
     const el = rackCaptureRef.current;
     if (!el) {
-      setSaveError('Add at least one device to show the rack diagram before exporting.');
-      window.setTimeout(() => setSaveError(null), 4000);
+      throw new Error('Add at least one device to show the rack diagram before exporting.');
+    }
+    el.classList.add('rack-export-png-light');
+    let restoreSvg: (() => void) | undefined;
+    try {
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      });
+      restoreSvg = applyRackPngMonochromeSvg(el);
+      return await toPng(el, {
+        pixelRatio: 2,
+        cacheBust: true,
+        backgroundColor: '#ffffff',
+      });
+    } finally {
+      restoreSvg?.();
+      el.classList.remove('rack-export-png-light');
+    }
+  }, []);
+
+  const handlePrint = useCallback(async () => {
+    if (!rackCaptureRef.current) {
+      window.print();
       return;
     }
     setSaveError(null);
     try {
-      const dataUrl = await toPng(el, {
-        pixelRatio: 2,
-        cacheBust: true,
-        backgroundColor: 'transparent',
-      });
+      const dataUrl = await captureRackPngDataUrl();
+      await printRackPngDataUrl(dataUrl);
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : 'Could not print rack');
+      window.setTimeout(() => setSaveError(null), 5000);
+    }
+  }, [captureRackPngDataUrl]);
+
+  const handleExportDevicesCsv = useCallback(() => {
+    const csv = buildRackDevicesTemplateCsv(rackExportContext);
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    const safe = rackName.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '-') || 'rack';
+    link.download = `${safe}-devices.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }, [rackExportContext, rackName]);
+
+  const handleExportRackPng = useCallback(async () => {
+    setSaveError(null);
+    try {
+      const dataUrl = await captureRackPngDataUrl();
       const safe = rackName.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '-') || 'rack';
       const a = document.createElement('a');
       a.href = dataUrl;
@@ -710,8 +865,9 @@ export function RackPlanner({
       a.click();
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : 'Could not export image');
+      window.setTimeout(() => setSaveError(null), 4000);
     }
-  }, [rackName]);
+  }, [captureRackPngDataUrl, rackName]);
 
   const handleReturnFromRack = useCallback(
     (deviceId: string) => {
@@ -1005,7 +1161,7 @@ export function RackPlanner({
           className={`flex flex-wrap items-center gap-4 ${devices.length === 0 ? 'justify-end' : 'justify-between'}`}
         >
           {devices.length > 0 && (
-            <div>
+            <div className="no-print">
               <input
                 type="text"
                 value={rackName}
@@ -1029,55 +1185,50 @@ export function RackPlanner({
               </p>
             </div>
           )}
-          <div className="no-print flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setCurrentRacksOpen(true)}
-              className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
-                devices.length === 0
-                  ? 'border-2 border-slate-500 bg-slate-800 text-sky-200 hover:bg-slate-700'
-                  : 'border border-slate-500 bg-slate-800 text-slate-200 hover:bg-slate-700'
-              }`}
-            >
-              Current racks
-            </button>
-            {devices.length > 0 && (
-              <>
-                <button
-                  type="button"
-                  onClick={handlePrint}
-                  className="flex items-center gap-2 rounded-lg border border-slate-500 bg-slate-800 px-3 py-2 text-sm font-medium text-slate-200 transition-colors hover:bg-slate-700"
-                >
-                  <Printer className="size-4" />
-                  Print
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void handleExportRackPng()}
-                  className="flex items-center gap-2 rounded-lg border border-slate-500 bg-slate-800 px-3 py-2 text-sm font-medium text-slate-200 transition-colors hover:bg-slate-700"
-                >
-                  <ImageDown className="size-4" />
-                  Export PNG
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSaveRackModalOpen(true)}
-                  className="flex items-center gap-2 rounded-lg bg-[#003366] px-4 py-2 text-white transition-colors hover:bg-[#004080]"
-                >
-                  <Save className="size-5" />
-                  Save rack
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowSettings(!showSettings)}
-                  className="flex items-center gap-2 rounded-lg border-2 border-slate-500 bg-slate-800/80 px-4 py-2 text-sky-200 transition-colors hover:bg-slate-700"
-                >
-                  <Settings className="size-5" />
-                  Settings
-                </button>
-              </>
-            )}
-          </div>
+          {devices.length > 0 && (
+            <div className="no-print flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={handlePrint}
+                className="flex items-center gap-2 rounded-lg border border-slate-500 bg-slate-800 px-3 py-2 text-sm font-medium text-slate-200 transition-colors hover:bg-slate-700"
+              >
+                <Printer className="size-4" />
+                Print
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleExportRackPng()}
+                className="flex items-center gap-2 rounded-lg border border-slate-500 bg-slate-800 px-3 py-2 text-sm font-medium text-slate-200 transition-colors hover:bg-slate-700"
+              >
+                <ImageDown className="size-4" />
+                Export PNG
+              </button>
+              <button
+                type="button"
+                onClick={handleExportDevicesCsv}
+                className="flex items-center gap-2 rounded-lg border border-slate-500 bg-slate-800 px-3 py-2 text-sm font-medium text-slate-200 transition-colors hover:bg-slate-700"
+              >
+                <FileSpreadsheet className="size-4" />
+                Export CSV of devices
+              </button>
+              <button
+                type="button"
+                onClick={() => setSaveRackModalOpen(true)}
+                className="flex items-center gap-2 rounded-lg bg-[#003366] px-4 py-2 text-white transition-colors hover:bg-[#004080]"
+              >
+                <Save className="size-5" />
+                Save rack
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowSettings(!showSettings)}
+                className="flex items-center gap-2 rounded-lg border-2 border-slate-500 bg-slate-800/80 px-4 py-2 text-sky-200 transition-colors hover:bg-slate-700"
+              >
+                <Settings className="size-5" />
+                Settings
+              </button>
+            </div>
+          )}
         </div>
         {saveError && (
           <p className="no-print text-sm text-red-400" role="alert">
@@ -1205,12 +1356,6 @@ export function RackPlanner({
         )}
       </div>
 
-      <CurrentRacksModal
-        isOpen={currentRacksOpen}
-        onClose={() => setCurrentRacksOpen(false)}
-        currentRackId={rackId}
-        onOpenRack={handleOpenRackFromLibrary}
-      />
       {blocker.state === 'blocked' && !saveRackModalOpen && (
         <div
           className="no-print fixed inset-0 z-[75] flex items-center justify-center bg-black/50 p-4"
@@ -1298,6 +1443,7 @@ export function RackPlanner({
         onSaveDevice={handleCsvSaveCustomDevice}
         existingDeviceNames={existingNamesForCsvAdd}
         csvImportRow={csvAddSnapshot}
+        surface="dark"
       />
 
       {portMismatch && (
@@ -1307,26 +1453,27 @@ export function RackPlanner({
           aria-modal="true"
           aria-labelledby="port-mismatch-title"
         >
-          <div className="max-w-md rounded-xl bg-white p-6 shadow-xl">
-            <h2 id="port-mismatch-title" className="text-lg font-bold text-gray-900">
+          <div className="max-w-md rounded-xl border border-slate-600 bg-slate-900 p-6 shadow-2xl ring-1 ring-slate-500/30">
+            <h2 id="port-mismatch-title" className="text-lg font-bold text-slate-100">
               No matching ports
             </h2>
-            <p className="mt-2 text-sm text-gray-600">
-              There is no compatible port pair between <strong>{portMismatch.from.name}</strong> and{' '}
-              <strong>{portMismatch.to.name}</strong> for a direct cable. Would you like to reconfigure both devices?
+            <p className="mt-2 text-sm text-slate-400">
+              There is no compatible port pair between <strong className="text-slate-200">{portMismatch.from.name}</strong>{' '}
+              and <strong className="text-slate-200">{portMismatch.to.name}</strong> for a direct cable. Would you like to
+              reconfigure both devices?
             </p>
             <div className="mt-6 flex justify-end gap-2">
               <button
                 type="button"
                 onClick={handlePortMismatchNo}
-                className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                className="rounded-lg border border-slate-500 px-4 py-2 text-sm font-medium text-slate-200 hover:bg-slate-800"
               >
                 No — discard cable
               </button>
               <button
                 type="button"
                 onClick={handlePortMismatchYes}
-                className="rounded-lg bg-[#003366] px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+                className="rounded-lg bg-[#003366] px-4 py-2 text-sm font-medium text-white hover:bg-[#004080]"
               >
                 Yes — edit ports
               </button>

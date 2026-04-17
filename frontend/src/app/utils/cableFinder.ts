@@ -200,3 +200,44 @@ export function findAllConnectablePairs(fromDevice: Device, toDevice: Device, ma
   }
   return out;
 }
+
+/**
+ * Output → output pairs (same connector) with a direct cable in the library — e.g. loop/monitor paths.
+ * Shown in suggestions with clear “output” labeling on both ends.
+ */
+export function findAllConnectableOutputToOutputPairs(
+  fromDevice: Device,
+  toDevice: Device,
+  max = 8,
+): ConnectablePair[] {
+  const out: ConnectablePair[] = [];
+  const seen = new Set<string>();
+  const outputPortsFrom = fromDevice.ports.filter(
+    (p) => p.direction === 'output' || p.direction === 'both',
+  );
+  const outputPortsTo = toDevice.ports.filter(
+    (p) => p.direction === 'output' || p.direction === 'both',
+  );
+
+  for (const outputPort of outputPortsFrom) {
+    for (const outputPortTo of outputPortsTo) {
+      const directCable = findDirectCable(outputPort.type, outputPortTo.type);
+      if (!directCable) continue;
+      const key = `oo-${outputPort.type}-${outputPortTo.type}-${outputPort.label ?? ''}-${outputPortTo.label ?? ''}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({
+        fromPort: outputPort,
+        toPort: outputPortTo,
+        solution: {
+          type: 'direct',
+          cable: directCable,
+          confidence: 'medium',
+          notes: 'Output → output (both ports are outputs)',
+        },
+      });
+      if (out.length >= max) return out;
+    }
+  }
+  return out;
+}
