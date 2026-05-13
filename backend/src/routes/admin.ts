@@ -1,16 +1,17 @@
 import express, { Router } from 'express';
 import type { Request, Response, NextFunction } from 'express';
+import { env } from '../config/env';
+import { asyncHandler } from '../http/asyncHandler';
 import { localhostOnly } from '../middleware/localhostOnly';
-import * as rackRepo from '../repos/rackRepo';
 import {
-  syncCatalogFromConfiguredFile,
-  syncCatalogFromConfiguredUrl,
-  syncCatalogFromCsvText,
-  syncCatalogFromGoogleSheet,
-} from '../services/catalogSync';
+  deleteAdminRack,
+  deleteAllAdminRacks,
+  listAdminRacks,
+  syncAdminCatalog,
+} from '../services/adminService';
 
 function requireAdminToken(req: Request, res: Response, next: NextFunction): void {
-  const expected = process.env.ADMIN_TOKEN?.trim();
+  const expected = env.ADMIN_TOKEN;
   if (!expected) {
     next();
     return;
@@ -275,54 +276,27 @@ adminRouter.get('/', (_req, res) => {
 const api = Router();
 api.use(requireAdminToken);
 
-api.get('/racks', async (_req, res, next) => {
-  try {
-    const rows = await rackRepo.listRacks();
-    res.json(
-      rows.map((r) => ({
-        id: r.id,
-        name: r.name,
-        totalHeight: r.totalHeightU,
-        rackWidthInches: r.rackWidthInches,
-        rackDepthInches: r.rackDepthInches,
-        deviceCount: r._count.devices,
-        createdAt: r.createdAt.toISOString(),
-        updatedAt: r.updatedAt.toISOString(),
-        savedByDisplayName: r.savedByDisplayName,
-        savedByVerified: r.savedByVerified,
-      })),
-    );
-  } catch (e) {
-    next(e);
-  }
-});
+api.get(
+  '/racks',
+  asyncHandler(async (_req, res) => {
+    res.json(await listAdminRacks());
+  }),
+);
 
-api.delete('/racks/:id', async (req, res, next) => {
-  try {
-    const ok = await rackRepo.deleteRackById(req.params.id);
-    if (!ok) {
-      res.status(404).json({ error: 'Rack not found' });
-      return;
-    }
+api.delete(
+  '/racks/:id',
+  asyncHandler(async (req, res) => {
+    await deleteAdminRack(req.params.id);
     res.status(204).end();
-  } catch (e) {
-    next(e);
-  }
-});
+  }),
+);
 
-api.post('/racks/delete-all', async (req, res, next) => {
-  try {
-    const body = req.body as { confirm?: string };
-    if (body?.confirm !== 'DELETE_ALL_RACKS') {
-      res.status(400).json({ error: 'Invalid confirmation; send { "confirm": "DELETE_ALL_RACKS" }' });
-      return;
-    }
-    const { count } = await rackRepo.deleteAllRacks();
-    res.json({ deleted: count });
-  } catch (e) {
-    next(e);
-  }
-});
+api.post(
+  '/racks/delete-all',
+  asyncHandler(async (req, res) => {
+    res.json(await deleteAllAdminRacks(req.body));
+  }),
+);
 
 api.post('/restart', (_req, res) => {
   setTimeout(() => process.exit(0), 750);
@@ -331,29 +305,7 @@ api.post('/restart', (_req, res) => {
 
 api.post('/catalog/sync', async (req, res, next) => {
   try {
-    const body = req.body as {
-      prune?: boolean;
-      csvText?: string;
-      source?: 'file' | 'url' | 'google';
-    };
-    const prune = !!body?.prune;
-    if (typeof body?.csvText === 'string' && body.csvText.trim()) {
-      const result = await syncCatalogFromCsvText(body.csvText, { pruneMissing: prune });
-      res.json({ ok: true, ...result, source: 'inline' });
-      return;
-    }
-    if (body?.source === 'google') {
-      const result = await syncCatalogFromGoogleSheet({ pruneMissing: prune });
-      res.json({ ok: true, ...result });
-      return;
-    }
-    if (body?.source === 'url') {
-      const result = await syncCatalogFromConfiguredUrl({ pruneMissing: prune });
-      res.json({ ok: true, ...result });
-      return;
-    }
-    const result = await syncCatalogFromConfiguredFile({ pruneMissing: prune });
-    res.json({ ok: true, ...result });
+    res.json(await syncAdminCatalog(req.body));
   } catch (e) {
     if (e instanceof Error) {
       res.status(400).json({ error: e.message });

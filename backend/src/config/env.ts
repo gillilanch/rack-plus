@@ -35,6 +35,7 @@ const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   PORT: numberFromEnv(4000).pipe(z.number().int().positive().max(65_535)),
   FRONTEND_DIST: optionalString,
+  ADMIN_TOKEN: optionalString,
   FOX_CATALOG_CSV_URL: optionalString,
   GOOGLE_SHEETS_SPREADSHEET_ID: optionalString,
   CATALOG_WEBHOOK_SECRET: optionalString,
