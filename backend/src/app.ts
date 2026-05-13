@@ -3,12 +3,13 @@ import fs from 'fs';
 import express from 'express';
 import type { Express } from 'express';
 import cors from 'cors';
-import { prisma } from './db/client';
 import { racksRouter } from './routes/racks';
 import { employeesRouter } from './routes/employees';
 import { adminRouter } from './routes/admin';
 import { catalogRouter } from './routes/catalog';
 import { deviceCategoriesRouter } from './routes/deviceCategories';
+import { healthRouter } from './routes/health';
+import { v1Router } from './routes/v1';
 import { errorHandler } from './middleware/errorHandler';
 import { env } from './config/env';
 
@@ -66,22 +67,19 @@ export function createApp(): Express {
     });
   }
 
-  app.get('/health', async (_req, res, next) => {
-    try {
-      await prisma.$queryRaw`SELECT 1`;
-      let catalogDeviceCount: number | null = null;
-      try {
-        catalogDeviceCount = await prisma.catalogDevice.count();
-      } catch {
-        /* migration not applied or table missing */
-      }
-      const webhookSecretConfigured = Boolean(env.CATALOG_WEBHOOK_SECRET);
-      res.json({ ok: true, catalogDeviceCount, webhookSecretConfigured });
-    } catch (e) {
-      next(e);
-    }
-  });
+  app.use('/health', healthRouter);
 
+  app.get('/api', (_req, res) => {
+    res.json({
+      name: 'Rack+ API',
+      currentVersion: 'v1',
+      versions: {
+        v1: '/api/v1',
+      },
+      legacyRoutes: ['/api/racks', '/api/catalog', '/api/device-categories', '/api/employees'],
+    });
+  });
+  app.use('/api/v1', v1Router);
   app.use('/api/employees', employeesRouter);
   app.use('/api/racks', racksRouter);
   app.use('/api/catalog', catalogRouter);

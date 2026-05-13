@@ -1,91 +1,47 @@
 import { Router } from 'express';
-import { createRackBodySchema, updateRackBodySchema } from '../types/rackApi';
-import * as rackRepo from '../repos/rackRepo';
+import { asyncHandler } from '../http/asyncHandler';
+import {
+  createRackConfig,
+  deleteRackConfig,
+  getRackConfig,
+  listRackSummaries,
+  updateRackConfig,
+} from '../services/rackService';
 
 export const racksRouter = Router();
 
-const DUPLICATE_NAME =
-  'A rack already exists with that name. Please choose a different name.';
+racksRouter.get(
+  '/',
+  asyncHandler(async (_req, res) => {
+    res.json(await listRackSummaries());
+  }),
+);
 
-racksRouter.get('/', async (_req, res, next) => {
-  try {
-    const rows = await rackRepo.listRacks();
-    res.json(
-      rows.map((r) => ({
-        id: r.id,
-        name: r.name,
-        totalHeight: r.totalHeightU,
-        rackWidthInches: r.rackWidthInches,
-        rackDepthInches: r.rackDepthInches,
-        deviceCount: r._count.devices,
-        createdAt: r.createdAt.toISOString(),
-        updatedAt: r.updatedAt.toISOString(),
-        savedByDisplayName: r.savedByDisplayName,
-        savedByVerified: r.savedByVerified,
-      })),
-    );
-  } catch (e) {
-    next(e);
-  }
-});
+racksRouter.get(
+  '/:id',
+  asyncHandler(async (req, res) => {
+    res.json(await getRackConfig(req.params.id));
+  }),
+);
 
-racksRouter.get('/:id', async (req, res, next) => {
-  try {
-    const config = await rackRepo.getRackById(req.params.id);
-    if (!config) {
-      res.status(404).json({ error: 'Rack not found' });
-      return;
-    }
-    res.json(config);
-  } catch (e) {
-    next(e);
-  }
-});
+racksRouter.post(
+  '/',
+  asyncHandler(async (req, res) => {
+    res.status(201).json(await createRackConfig(req.body));
+  }),
+);
 
-racksRouter.post('/', async (req, res, next) => {
-  try {
-    const body = createRackBodySchema.parse(req.body);
-    const conflict = await rackRepo.findRackNameConflict(body.name);
-    if (conflict) {
-      res.status(409).json({ error: DUPLICATE_NAME });
-      return;
-    }
-    const config = await rackRepo.createRack(body);
-    res.status(201).json(config);
-  } catch (e) {
-    next(e);
-  }
-});
+racksRouter.put(
+  '/:id',
+  asyncHandler(async (req, res) => {
+    res.json(await updateRackConfig(req.params.id, req.body));
+  }),
+);
 
-racksRouter.put('/:id', async (req, res, next) => {
-  try {
-    const body = updateRackBodySchema.parse(req.body);
-    const conflict = await rackRepo.findRackNameConflict(body.name, req.params.id);
-    if (conflict) {
-      res.status(409).json({ error: DUPLICATE_NAME });
-      return;
-    }
-    const config = await rackRepo.upsertRackFull(req.params.id, body);
-    res.json(config);
-  } catch (e) {
-    next(e);
-  }
-});
-
-racksRouter.delete('/:id', async (req, res, next) => {
-  try {
-    const id = typeof req.params.id === 'string' ? req.params.id.trim() : '';
-    if (!id) {
-      res.status(400).json({ error: 'Missing rack id' });
-      return;
-    }
-    const ok = await rackRepo.deleteRackById(id);
-    if (!ok) {
-      res.status(404).json({ error: 'Rack not found' });
-      return;
-    }
+racksRouter.delete(
+  '/:id',
+  asyncHandler(async (req, res) => {
+    await deleteRackConfig(req.params.id);
     res.status(204).send();
-  } catch (e) {
-    next(e);
-  }
-});
+  }),
+);
