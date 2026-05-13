@@ -1,0 +1,17 @@
+{
+  "name": "rack-plus",
+  "private": true,
+  "scripts": {
+    "backend:dev": "npm --prefix backend run dev",
+    "backend:build": "npm --prefix backend run build",
+    "backend:typecheck": "npm --prefix backend run typecheck",
+    "backend:db:generate": "npm --prefix backend run db:generate",
+    "backend:db:migrate": "npm --prefix backend run db:migrate",
+    "frontend:dev": "npm --prefix frontend run dev",
+    "frontend:build": "npm --prefix frontend run build",
+    "frontend:typecheck": "npm --prefix frontend run typecheck",
+    "build": "npm run backend:build && npm run frontend:build",
+    "typecheck": "npm run backend:typecheck && npm run frontend:typecheck",
+    "check": "npm run typecheck"
+  }
+}

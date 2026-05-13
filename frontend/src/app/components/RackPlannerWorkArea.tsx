@@ -31,7 +31,7 @@ export function RackDevicesColumn(props: {
     onRemoveDevice,
     onReturnFromRack,
     onCsvImportComplete,
-    pendingCsvUnmatchedCount,
+    pendingCsvUnmatchedCount = 0,
     onReopenCsvReview,
     rackExportContext,
     onAddManualDevice,
